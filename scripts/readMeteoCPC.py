@@ -2,32 +2,32 @@ import csv
 import numpy as np
 
 fileNamesMeteoCPC=[ \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp002-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp003-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp004-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp005-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp006-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp007-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp008-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp009-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp010-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp011-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp012-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp013-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp014-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp015-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp016-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp017-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp018-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp019-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp020-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp021-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp022-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp023-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-1-MeteoCPC.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-1-MeteoCPC.csv']
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp002-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp003-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp004-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp005-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp006-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp007-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp008-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp009-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp010-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp011-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp012-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp013-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp014-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp015-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp016-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp017-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp018-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp019-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp020-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp021-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp022-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp023-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-1-MeteoCPC.csv']
 
 def readData(readThis=3,metStr="MeteoCPC-Exp005"):
 	time=[];pres=[];tgwm=[];tgws=[];twwm=[];twws=[];

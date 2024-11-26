@@ -9,32 +9,32 @@ from scipy.optimize import curve_fit
 readThis = 9
 
 fileNamePNSD_Mrg=[ \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp003-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp004-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp005-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp006-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp007-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp008-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp009-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp010-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp011-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp012-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp013-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp014-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp015-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp016-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv']
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp003-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp004-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp005-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp006-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp007-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp008-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp009-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp010-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp011-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp012-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp013-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp014-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp015-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp016-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv']
 
 # note, got to include PSD parameters for SDSA01, SDTP02 and ATD03
 whichPSD=[[1],[1],[5],[1],\

@@ -5,32 +5,32 @@ from matplotlib.colors import LogNorm
 
 
 fileNamesOPC_M=[ \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp002-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp003-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp004-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp005-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp006-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp007-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp008-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp009-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp010-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp011-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp012-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp013-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp014-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp015-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp016-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp017-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp018-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp019-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp020-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp021-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp022-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp023-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-2-OPC-d-MergedW.csv', \
-	'../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-2-OPC-d-MergedW.csv']
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp002-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp003-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp004-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp005-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp006-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp007-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp008-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp009-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp010-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp011-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp012-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp013-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp014-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp015-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp016-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp017-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp018-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp019-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp020-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp021-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp022-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp023-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-2-OPC-d-MergedW.csv']
 
 def readData(readThis = 3,opcStr="MergedOPC-Exp005"):
 	time=[];pres=[];tgwm=[];tgws=[];twwm=[];twws=[];
