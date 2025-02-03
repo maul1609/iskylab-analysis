@@ -30,7 +30,9 @@ fileNamesOPC_M=[ \
 	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-2-OPC-d-MergedW.csv', \
 	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-2-OPC-d-MergedW.csv', \
 	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-2-OPC-d-MergedW.csv', \
-	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-2-OPC-d-MergedW.csv']
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-2-OPC-d-MergedW.csv',\
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp028-2-OPC-d-MergedW.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp029-2-OPC-d-MergedW.csv']
 
 def readData(readThis = 3,opcStr="MergedOPC-Exp005"):
 	time=[];pres=[];tgwm=[];tgws=[];twwm=[];twws=[];

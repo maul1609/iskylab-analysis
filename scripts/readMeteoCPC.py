@@ -27,7 +27,9 @@ fileNamesMeteoCPC=[ \
 	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp024-1-MeteoCPC.csv', \
 	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp025-1-MeteoCPC.csv', \
 	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp026-1-MeteoCPC.csv', \
-	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-1-MeteoCPC.csv']
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp027-1-MeteoCPC.csv',\
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp028-1-MeteoCPC.csv', \
+	'../../../iSKYLAB01/Datasets/iSKYLAB01-Exp029-1-MeteoCPC.csv']
 
 def readData(readThis=3,metStr="MeteoCPC-Exp005"):
 	time=[];pres=[];tgwm=[];tgws=[];twwm=[];twws=[];
