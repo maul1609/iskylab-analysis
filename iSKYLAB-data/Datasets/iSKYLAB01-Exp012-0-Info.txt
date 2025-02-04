@@ -1,0 +1,16 @@
+Experiment Start: 2024/06/12 11:40:00
+Experiment End:   2024/06/12 15:08:00
+Campaign:       iSKYLAB01
+Experiment No.: 12
+Type of Aerosol:      NaCl
+Na Requested:         2000 #/cm3
+Na after Injection:   3727 #/cm3
+Na before Precooling: 3009 #/cm3
+Na before Expansion:  2816 #/cm3
+Tdew Requested:                 +0.0 degC
+Tdew/Tfrost after Injection:     NaN degC,   NaN degC
+Tdew/Tfrost before Precooling:  +3.3 degC,   NaN degC
+Tdew/Tfrost before Expansion:   +2.6 degC,   NaN degC
+INSEKT Filter:         N
+Cooling Rate:           -0.50 K/min
+Duration of Expansion: 1784 s
