@@ -31,6 +31,18 @@ fileNamesMeteoCPC=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp028-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp029-1-MeteoCPC.csv']
 
+metStr=['MeteoCPC-Exp002','MeteoCPC-Exp003','MeteoCPC-Exp004','MeteoCPC-Exp005',\
+	'MeteoCPC-Exp006','MeteoCPC-Exp007','MeteoCPC-Exp008','MeteoCPC-Exp009',\
+	'MeteoCPC-Exp010','MeteoCPC-Exp011','MeteoCPC-Exp012','MeteoCPC-Exp013',\
+	'MeteoCPC-Exp014','MeteoCPC-Exp015','MeteoCPC-Exp016','MeteoCPC-Exp017',\
+	'MeteoCPC-Exp018','MeteoCPC-Exp019',\
+	#'MeteoCPC-Exp020', 
+	'MeteoCPC-Exp021',\
+	'MeteoCPC-Exp022','MeteoCPC-Exp023',\
+	#'MeteoCPC-Exp024',
+	'MeteoCPC-Exp025',\
+	'MeteoCPC-Exp026','MeteoCPC-Exp027','MeteoCPC-Exp028','MeteoCPC-Exp029']
+
 def readData(readThis=3,metStr="MeteoCPC-Exp005"):
 	time=[];pres=[];tgwm=[];tgws=[];twwm=[];twws=[];
 	tdew=[];tfrost=[];cpci=[];cpctb=[];cpctt=[]
@@ -62,17 +74,6 @@ def readData(readThis=3,metStr="MeteoCPC-Exp005"):
 if __name__== "__main__":
 	outputModel=False
 	readThis=4
-	metStr=['MeteoCPC-Exp002','MeteoCPC-Exp003','MeteoCPC-Exp004','MeteoCPC-Exp005',\
-		'MeteoCPC-Exp006','MeteoCPC-Exp007','MeteoCPC-Exp008','MeteoCPC-Exp009',\
-		'MeteoCPC-Exp010','MeteoCPC-Exp011','MeteoCPC-Exp012','MeteoCPC-Exp013',\
-		'MeteoCPC-Exp014','MeteoCPC-Exp015','MeteoCPC-Exp016','MeteoCPC-Exp017',\
-		'MeteoCPC-Exp018','MeteoCPC-Exp019',\
-		#'MeteoCPC-Exp020', 
-		'MeteoCPC-Exp021',\
-		'MeteoCPC-Exp022','MeteoCPC-Exp023',\
-		#'MeteoCPC-Exp024',
-		'MeteoCPC-Exp025',\
-		'MeteoCPC-Exp026','MeteoCPC-Exp027','MeteoCPC-Exp028','MeteoCPC-Exp029']
 	
 	if 'data1' in locals():
 		pass

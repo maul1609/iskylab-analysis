@@ -38,6 +38,18 @@ fileNamePNSD_Mrg=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp028-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp029-3-InitialPNSD-Mrg.csv']
 
+npsdStr=['InitialPNSD-Exp002','InitialPNSD-Exp003','InitialPNSD-Exp004','InitialPNSD-Exp005',\
+	'InitialPNSD-Exp006','InitialPNSD-Exp007','InitialPNSD-Exp008','InitialPNSD-Exp009',\
+	'InitialPNSD-Exp010','InitialPNSD-Exp011','InitialPNSD-Exp012','InitialPNSD-Exp013',\
+	'InitialPNSD-Exp014','InitialPNSD-Exp015','InitialPNSD-Exp016','InitialPNSD-Exp017',\
+	'InitialPNSD-Exp018','InitialPNSD-Exp019',\
+	#'InitialPNSD-Exp020', 
+	'InitialPNSD-Exp021',\
+	'InitialPNSD-Exp022','InitialPNSD-Exp023',\
+	#'InitialPNSD-Exp024',
+	'InitialPNSD-Exp025',\
+	'InitialPNSD-Exp026','InitialPNSD-Exp027','InitialPNSD-Exp028','InitialPNSD-Exp029']
+
 # note, got to include PSD parameters for SDSA01, SDTP02 and ATD03
 whichPSD=[[1],[1],[5],[1],\
 	[1,0],[1,0],[1,3],[1,3],[1,5],\
@@ -113,17 +125,6 @@ def readData(readThis = 3,npsdStr="InitialPNSD-Exp005"):
 if __name__ == "__main__":
 	doAnalysis = True
 	
-	npsdStr=['InitialPNSD-Exp002','InitialPNSD-Exp003','InitialPNSD-Exp004','InitialPNSD-Exp005',\
-		'InitialPNSD-Exp006','InitialPNSD-Exp007','InitialPNSD-Exp008','InitialPNSD-Exp009',\
-		'InitialPNSD-Exp010','InitialPNSD-Exp011','InitialPNSD-Exp012','InitialPNSD-Exp013',\
-		'InitialPNSD-Exp014','InitialPNSD-Exp015','InitialPNSD-Exp016','InitialPNSD-Exp017',\
-		'InitialPNSD-Exp018','InitialPNSD-Exp019',\
-		#'InitialPNSD-Exp020', 
-		'InitialPNSD-Exp021',\
-		'InitialPNSD-Exp022','InitialPNSD-Exp023',\
-		#'InitialPNSD-Exp024',
-		'InitialPNSD-Exp025',\
-		'InitialPNSD-Exp026','InitialPNSD-Exp027','InitialPNSD-Exp028','InitialPNSD-Exp029']
 	
 	if 'data1' in locals():
 		pass

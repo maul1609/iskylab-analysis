@@ -34,6 +34,18 @@ fileNamesOPC_M=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp028-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp029-2-OPC-d-MergedW.csv']
 
+opcStr=['MergedOPC-Exp002','MergedOPC-Exp003','MergedOPC-Exp004','MergedOPC-Exp005',\
+	'MergedOPC-Exp006','MergedOPC-Exp007','MergedOPC-Exp008','MergedOPC-Exp009',\
+	'MergedOPC-Exp010','MergedOPC-Exp011','MergedOPC-Exp012','MergedOPC-Exp013',\
+	'MergedOPC-Exp014','MergedOPC-Exp015','MergedOPC-Exp016','MergedOPC-Exp017',\
+	'MergedOPC-Exp018','MergedOPC-Exp019',\
+	#'MergedOPC-Exp020', 
+	'MergedOPC-Exp021',\
+	'MergedOPC-Exp022','MergedOPC-Exp023',\
+	#'MergedOPC-Exp024',
+	'MergedOPC-Exp025',\
+	'MergedOPC-Exp026','MergedOPC-Exp027','MergedOPC-Exp028','MergedOPC-Exp029']
+
 def readData(readThis = 3,opcStr="MergedOPC-Exp005"):
 	time=[];pres=[];tgwm=[];tgws=[];twwm=[];twws=[];
 	tdew=[];tfrost=[];cpci=[];cpctb=[];cpctt=[]
@@ -74,17 +86,6 @@ def readData(readThis = 3,opcStr="MergedOPC-Exp005"):
 if __name__== "__main__":
 	plotModel=False
 	readThis=4
-	opcStr=['MergedOPC-Exp002','MergedOPC-Exp003','MergedOPC-Exp004','MergedOPC-Exp005',\
-		'MergedOPC-Exp006','MergedOPC-Exp007','MergedOPC-Exp008','MergedOPC-Exp009',\
-		'MergedOPC-Exp010','MergedOPC-Exp011','MergedOPC-Exp012','MergedOPC-Exp013',\
-		'MergedOPC-Exp014','MergedOPC-Exp015','MergedOPC-Exp016','MergedOPC-Exp017',\
-		'MergedOPC-Exp018','MergedOPC-Exp019',\
-		#'MergedOPC-Exp020', 
-		'MergedOPC-Exp021',\
-		'MergedOPC-Exp022','MergedOPC-Exp023',\
-		#'MergedOPC-Exp024',
-		'MergedOPC-Exp025',\
-		'MergedOPC-Exp026','MergedOPC-Exp027','MergedOPC-Exp028','MergedOPC-Exp029']
 	
 	if 'data1' in locals():
 		pass
