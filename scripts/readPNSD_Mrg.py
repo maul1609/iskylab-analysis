@@ -27,14 +27,16 @@ fileNamePNSD_Mrg=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
+# 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
+# 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv']
+	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp028-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp029-3-InitialPNSD-Mrg.csv']
 
 # note, got to include PSD parameters for SDSA01, SDTP02 and ATD03
 whichPSD=[[1],[1],[5],[1],\
@@ -83,7 +85,7 @@ def lognormal_func(x, *args):
 	return dNdlogD
 
 
-if __name__ == "__main__":
+def readData(readThis = 3,npsdStr="InitialPNSD-Exp005"):
 	fp = open(fileNamePNSD_Mrg[readThis],'r')
 	str1=fp.readlines()
 	fp.close()
@@ -100,34 +102,70 @@ if __name__ == "__main__":
 	dtemp=str1[3].split(',')
 	dN_dlogDve_cc=[float(val) for val in dtemp[1:-1]]
 	dN_dlogDve_cc=dN_dlogDve_cc/np.log(10.0)
-	plt.ion()
-	plt.figure()
-	plt.plot(Dve,dN_dlogDve_cc)
-	plt.xscale('log')
-	plt.xlim((0.01,2))
-	type1=2
+
+	data1=dict()
+	data1 = {npsdStr : \
+		{"Dve" : np.array(Dve), "dlogDve" : np.array(dlogDve), \
+		"dN_dlogDve_scc" : np.array(dN_dlogDve_scc), \
+		"dN_dlogDve_cc": np.array(dN_dlogDve_cc)}}
+	return data1
+
+if __name__ == "__main__":
+	doAnalysis = True
 	
-	if type1 == 2:
-		d=np.logspace(-2,0,100)
-		dm2=[0.26,0.22]
-		lnsig2=[0.2,0.6]
-		N2=[3000*0.6*np.sqrt(2.0*np.pi)*lnsig2[0], \
-			3000*0.4*np.sqrt(2.0*np.pi)*lnsig2[1]]	
-		popt, pcov = curve_fit(lognormal_func2, Dve,dN_dlogDve_cc, \
-			p0=[N2[0], lnsig2[0], dm2[0], N2[1], lnsig2[1],dm2[1]],\
-			method='trf') 
-		dNdlogD=np.zeros(len(d))
-		N2=[popt[0],popt[3]]
-		lnsig2=[popt[1],popt[4]]
-		dm2=[popt[2],popt[5]]
-		for i in range(len(dm2)):
-			dNdlogD=dNdlogD+ \
-				N2[i]/(np.sqrt(2.0*np.pi)*lnsig2[i])* \
-				np.exp(-(np.log(d/dm2[i])**2.0)/(2*lnsig2[i]**2))
-		plt.plot(d,dNdlogD)
-		
+	npsdStr=['InitialPNSD-Exp002','InitialPNSD-Exp003','InitialPNSD-Exp004','InitialPNSD-Exp005',\
+		'InitialPNSD-Exp006','InitialPNSD-Exp007','InitialPNSD-Exp008','InitialPNSD-Exp009',\
+		'InitialPNSD-Exp010','InitialPNSD-Exp011','InitialPNSD-Exp012','InitialPNSD-Exp013',\
+		'InitialPNSD-Exp014','InitialPNSD-Exp015','InitialPNSD-Exp016','InitialPNSD-Exp017',\
+		'InitialPNSD-Exp018','InitialPNSD-Exp019',\
+		#'InitialPNSD-Exp020', 
+		'InitialPNSD-Exp021',\
+		'InitialPNSD-Exp022','InitialPNSD-Exp023',\
+		#'InitialPNSD-Exp024',
+		'InitialPNSD-Exp025',\
+		'InitialPNSD-Exp026','InitialPNSD-Exp027','InitialPNSD-Exp028','InitialPNSD-Exp029']
+	
+	if 'data1' in locals():
+		pass
 	else:
-		popt, pcov = curve_fit(lognormal_func,Dve, dN_dlogDve_cc, \
-			p0=[3000.0,600], method='lm') 
-		plt.plot(Dve, lognormal_func(np.array(Dve),popt))
+		data1=dict()
+
+	for i in range(len(npsdStr)):
+		data2=readData(readThis=i,npsdStr=npsdStr[i])
+		data1[npsdStr[i]]=data2[npsdStr[i]].copy()
 	
+	if doAnalysis:
+		plt.ion()
+		plt.figure()
+		plt.plot(data1[npsdStr[readThis]]['Dve'],data1[npsdStr[readThis]]['dN_dlogDve_cc'])
+		plt.xscale('log')
+		plt.xlim((0.01,2))
+		type1=2
+		
+		if type1 == 2:
+			d=np.logspace(-2,0,100)
+			dm2=[0.26,0.22]
+			lnsig2=[0.2,0.6]
+			N2=[3000*0.6*np.sqrt(2.0*np.pi)*lnsig2[0], \
+				3000*0.4*np.sqrt(2.0*np.pi)*lnsig2[1]]	
+			popt, pcov = curve_fit(lognormal_func2, data1[npsdStr[readThis]]['Dve'],\
+				data1[npsdStr[readThis]]['dN_dlogDve_cc'], \
+				p0=[N2[0], lnsig2[0], dm2[0], N2[1], lnsig2[1],dm2[1]],\
+				method='trf') 
+			dNdlogD=np.zeros(len(d))
+			N2=[popt[0],popt[3]]
+			lnsig2=[popt[1],popt[4]]
+			dm2=[popt[2],popt[5]]
+			for i in range(len(dm2)):
+				dNdlogD=dNdlogD+ \
+					N2[i]/(np.sqrt(2.0*np.pi)*lnsig2[i])* \
+					np.exp(-(np.log(d/dm2[i])**2.0)/(2*lnsig2[i]**2))
+			plt.plot(d,dNdlogD)
+			
+		else:
+			popt, pcov = curve_fit(lognormal_func,data1[npsdStr[readThis]]['Dve'], \
+				data1[npsdStr[readThis]]['dN_dlogDve_cc'], \
+				p0=[3000.0,600], method='lm') 
+			plt.plot(data1[npsdStr[readThis]]['Dve'], \
+				lognormal_func(np.array(data1[npsdStr[readThis]]['Dve']),popt))
+		

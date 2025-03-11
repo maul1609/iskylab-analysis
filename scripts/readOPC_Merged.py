@@ -23,11 +23,11 @@ fileNamesOPC_M=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp017-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp018-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp019-2-OPC-d-MergedW.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp020-2-OPC-d-MergedW.csv', \
+# 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp020-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp021-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp022-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp023-2-OPC-d-MergedW.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp024-2-OPC-d-MergedW.csv', \
+# 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp024-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp025-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp026-2-OPC-d-MergedW.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp027-2-OPC-d-MergedW.csv',\
@@ -72,8 +72,32 @@ def readData(readThis = 3,opcStr="MergedOPC-Exp005"):
 	return data1
 
 if __name__== "__main__":
-	data1=readData()
-	plt.pcolormesh(data1['MergedOPC-Exp005']['Time'], \
-	data1['MergedOPC-Exp005']['Dp'], \
-	data1['MergedOPC-Exp005']['Conc'].T, \
-	norm=LogNorm(vmin=1e-3, vmax=data1['MergedOPC-Exp005']['Conc'].max()))  
+	plotModel=False
+	readThis=4
+	opcStr=['MergedOPC-Exp002','MergedOPC-Exp003','MergedOPC-Exp004','MergedOPC-Exp005',\
+		'MergedOPC-Exp006','MergedOPC-Exp007','MergedOPC-Exp008','MergedOPC-Exp009',\
+		'MergedOPC-Exp010','MergedOPC-Exp011','MergedOPC-Exp012','MergedOPC-Exp013',\
+		'MergedOPC-Exp014','MergedOPC-Exp015','MergedOPC-Exp016','MergedOPC-Exp017',\
+		'MergedOPC-Exp018','MergedOPC-Exp019',\
+		#'MergedOPC-Exp020', 
+		'MergedOPC-Exp021',\
+		'MergedOPC-Exp022','MergedOPC-Exp023',\
+		#'MergedOPC-Exp024',
+		'MergedOPC-Exp025',\
+		'MergedOPC-Exp026','MergedOPC-Exp027','MergedOPC-Exp028','MergedOPC-Exp029']
+	
+	if 'data1' in locals():
+		pass
+	else:
+		data1=dict()
+		
+	for i in range(len(opcStr)):
+		data2=readData(readThis=i,opcStr=opcStr[i])
+		data1[opcStr[i]]=data2[opcStr[i]].copy()
+	
+
+	if plotModel:
+		plt.pcolormesh(data1['MergedOPC-Exp005']['Time'], \
+		data1['MergedOPC-Exp005']['Dp'], \
+		data1['MergedOPC-Exp005']['Conc'].T, \
+		norm=LogNorm(vmin=1e-3, vmax=data1['MergedOPC-Exp005']['Conc'].max()))  

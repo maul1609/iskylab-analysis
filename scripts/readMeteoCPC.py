@@ -20,11 +20,11 @@ fileNamesMeteoCPC=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp017-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp018-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp019-1-MeteoCPC.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp020-1-MeteoCPC.csv', \
+# 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp020-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp021-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp022-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp023-1-MeteoCPC.csv', \
-	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp024-1-MeteoCPC.csv', \
+# 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp024-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp025-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp026-1-MeteoCPC.csv', \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp027-1-MeteoCPC.csv',\
@@ -60,27 +60,43 @@ def readData(readThis=3,metStr="MeteoCPC-Exp005"):
 	return data1
 
 if __name__== "__main__":
-	outputModel=True
+	outputModel=False
 	readThis=4
-	metStr='MeteoCPC-Exp006'
+	metStr=['MeteoCPC-Exp002','MeteoCPC-Exp003','MeteoCPC-Exp004','MeteoCPC-Exp005',\
+		'MeteoCPC-Exp006','MeteoCPC-Exp007','MeteoCPC-Exp008','MeteoCPC-Exp009',\
+		'MeteoCPC-Exp010','MeteoCPC-Exp011','MeteoCPC-Exp012','MeteoCPC-Exp013',\
+		'MeteoCPC-Exp014','MeteoCPC-Exp015','MeteoCPC-Exp016','MeteoCPC-Exp017',\
+		'MeteoCPC-Exp018','MeteoCPC-Exp019',\
+		#'MeteoCPC-Exp020', 
+		'MeteoCPC-Exp021',\
+		'MeteoCPC-Exp022','MeteoCPC-Exp023',\
+		#'MeteoCPC-Exp024',
+		'MeteoCPC-Exp025',\
+		'MeteoCPC-Exp026','MeteoCPC-Exp027','MeteoCPC-Exp028','MeteoCPC-Exp029']
 	
-	data1=readData(readThis=readThis,metStr=metStr)
+	if 'data1' in locals():
+		pass
+	else:
+		data1=dict()
+	for i in range(len(metStr)):
+		data2=readData(readThis=i,metStr=metStr[i])
+		data1[metStr[i]]=data2[metStr[i]].copy()
 	
 	if outputModel:
 		# create data for namelist
-		num1=len(data1[metStr]['Time'])
+		num1=len(data1[metStr[readThis]]['Time'])
 		print('n_levels_c = ' + str(num1) + ',')
 		str1='	time_chamber(1:' + str(num1) + ')   = '
 		for i in range(num1):
-			str1 = str1 + str(data1[metStr]['Time'][i]) + ','
+			str1 = str1 + str(data1[metStr[readThis]]['Time'][i]) + ','
 		str1 = str1 + '\n'
 		str1=str1+ '	press_chamber(1:' + str(num1) + ')   = '	
 		for i in range(num1):
-			str1=str1+str(data1[metStr]['Pressure'][i]*100.0) + ','
+			str1=str1+str(data1[metStr[readThis]]['Pressure'][i]*100.0) + ','
 		str1=str1+ '\n'
 		str1=str1+ '	temp_chamber(1:' + str(num1) + ')   = '	
 		for i in range(num1):
-			str1=str1+str(data1[metStr]['Tgw mean'][i]+273.15) + ','
+			str1=str1+str(data1[metStr[readThis]]['Tgw mean'][i]+273.15) + ','
 		str1=str1+'\n'
 		print(str1)
 	
