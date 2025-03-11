@@ -70,13 +70,20 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,modelFile,modelStr,title1):
 	ax.plot(dataOPC[opcStr]['Time'],dataOPC[opcStr]['lwc'])
 	ax.plot(dataModel[modelStr]['time'],dataModel[modelStr]['ql']*1e3* \
 		dataModel[modelStr]['rhoa'],'--')
+	
+	# add in MBW
+	e=svp.svp(dataMet[metStr]['TDew']+273.15,'buck2','liq')
+	esat=np.array(svp.svp(dataMet[metStr]['Tgw mean']+273.15,'buck2','liq'))*0.95
+	p=dataMet[metStr]['Pressure']*100.0
+	ax.plot(dataMet[metStr]['Time'], 0.622*(e-esat)/p*1000.0 )	
+	
 	ax.set_yticks(np.mgrid[0:2:0.2])
 	ax.set_ylim((-0.2,2))
 	ax.set_xlim(xl)
 	ax.grid()
 	ax.set_ylabel('LWC (g m$^{-3}$)')
 	ax.text(0.4,0.9,'(e) Liquid water content',transform=ax.transAxes)
-	ax.legend(['AIDA','BMM'])
+	ax.legend(['AIDA','BMM','MBW'])
 
 
 	# rh plot
@@ -107,21 +114,21 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,modelFile,modelStr,title1):
 if __name__=="__main__":
 	# experiment 5, AS
 	doPlot(3,3,'MeteoCPC-Exp005','MergedOPC-Exp005', \
-		'../../modelOutput/outputExp005.nc','model-Exp005',\
+		'../iSKYLAB-data/modelOutput/outputExp005.nc','model-Exp005',\
 		'Experiment 005: AS (0.01 wt%)')
 	plt.savefig('/tmp/exp5.png')
 	# experiment 6, AS + NaCl
 	doPlot(4,4,'MeteoCPC-Exp006','MergedOPC-Exp006', \
-		'../../modelOutput/outputExp006.nc','model-Exp006',\
+		'../iSKYLAB-data/modelOutput/outputExp006a.nc','model-Exp006',\
 		'Experiment 006: AS (0.01 wt%) + NaCl (0.1 wt%)')
 	plt.savefig('/tmp/exp6.png')
 	# exoeriment 11, AS
 	doPlot(9,9,'MeteoCPC-Exp011','MergedOPC-Exp011', \
-		'../../modelOutput/outputExp011.nc','model-Exp011',\
+		'../iSKYLAB-data/modelOutput/outputExp011.nc','model-Exp011',\
 		'Experiment 011: AS (0.01 wt%)')
 	# experiment 11, AS
 	doPlot(9,9,'MeteoCPC-Exp011','MergedOPC-Exp011', \
-		'../../modelOutput/outputExp011-2.nc','model-Exp011',\
+		'../iSKYLAB-data/modelOutput/outputExp011-2.nc','model-Exp011',\
 		'Experiment 011: AS (10.0 wt%)')
 	# experiment 11, AS with vapour sink
 # 	doPlot(9,9,'MeteoCPC-Exp011','MergedOPC-Exp011', \
@@ -129,17 +136,17 @@ if __name__=="__main__":
 # 		'Experiment 011: AS (0.01 wt% with vapour sink)')
 	# experiment 12, NaCl
 	doPlot(10,10,'MeteoCPC-Exp012','MergedOPC-Exp012', \
-		'../../modelOutput/outputExp012.nc','model-Exp012',\
+		'../iSKYLAB-data/modelOutput/outputExp012.nc','model-Exp012',\
 		'Experiment 012: NaCl (0.1 wt%)')
 	# experiment 13, NaCl
 	doPlot(11,11,'MeteoCPC-Exp013','MergedOPC-Exp013', \
-		'../../modelOutput/outputExp013.nc','model-Exp013',\
+		'../iSKYLAB-data/modelOutput/outputExp013.nc','model-Exp013',\
 		'Experiment 013: NaCl (0.1 wt%)')
 	# experiment 16, AS
 	doPlot(14,14,'MeteoCPC-Exp016','MergedOPC-Exp016', \
-		'../../modelOutput/outputExp016.nc','model-Exp016',\
+		'../iSKYLAB-data/modelOutput/outputExp016.nc','model-Exp016',\
 		'Experiment 016: AS (1.0 wt%)')
 	# experiment 16, AS
 	doPlot(15,15,'MeteoCPC-Exp017','MergedOPC-Exp017', \
-		'../../modelOutput/outputExp017.nc','model-Exp017',\
+		'../iSKYLAB-data/modelOutput/outputExp017.nc','model-Exp017',\
 		'Experiment 017: AS (1.0 wt%)')
