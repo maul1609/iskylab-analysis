@@ -72,8 +72,8 @@ def readData(readThis=3,metStr="MeteoCPC-Exp005"):
 	return data1
 
 if __name__== "__main__":
-	outputModel=False
-	readThis=4
+	outputModel=True
+	readThis=5
 	
 	if 'data1' in locals():
 		pass

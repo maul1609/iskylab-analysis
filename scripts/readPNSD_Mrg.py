@@ -6,7 +6,7 @@ from scipy.optimize import curve_fit
 # calculate ratios for each case
 # for each individual fit recalculate based on slip correction
 # now you have initial conditions
-readThis = 9
+readThis = 15
 
 fileNamePNSD_Mrg=[ \
 	'../iSKYLAB-data/Datasets/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv', \
@@ -54,14 +54,32 @@ npsdStr=['InitialPNSD-Exp002','InitialPNSD-Exp003','InitialPNSD-Exp004','Initial
 whichPSD=[[1],[1],[5],[1],\
 	[1,0],[1,0],[1,3],[1,3],[1,5],\
 	[1],[0],[0],[0],[1],\
-	[1],[1],[1,0],[1,0]]
+	[5],[5],[1,0],[1,0],\
+	[-1],[-1,0],[-1,0],[-2],[-2,0],[-2,0],\
+	[1],[1]]
+targetConc=[[500],[5000],[5000],[3000],\
+	[3000,600],[3000,2000],[3000,2000],[3000,4000],[3000,4000],\
+	[5000],[2000],[600],[2000],[3000],[3000],[3000],[3000,600],[3000,2000],\
+	[1000],[3000,2000],[3000,2000],1000,[1000,4000],[1000,10000],\
+	[3000],[3000]]
+kappa=[[0.61],[0.61],[0.61],[0.61],\
+	[0.61,1.28],[0.61,1.28],[0.61,1.28],[0.61,1.28],[0.61,1.28],\
+	[0.61],[1.28],[1.28],[1.28],[0.067],[0.61],[0.61],[0.067,1.28],[0.067,1.28],\
+	[-1],[-1,1.28],[-1,1.28],[-2],[-2,1.28],[-2,1.28],\
+	[0.61],[0.61]]
+density=[[1770],[1770],[1770],[1770],\
+	[1770,2160],[1770,2160],[1770,2160],[1770,2160],[1770,2160],\
+	[1770],[2160],[2160],[2160],[1500],[1770],[1770],[1500,2160],[1500,2160],\
+	[4000],[4000,2160],[4000,2160],[4000],[4000,2160],[4000,2160],\
+	[1770],[1770]]
+
 N=[[0.49,0.38],[0.18,0.74],[0.16,0.91],[0.2,1.06],[0.6,1.37],[0.56,1.18]]
 lnsig=[[0.25,0.84],[0.19,0.45],[0.19,0.43],[0.23,0.47],[0.49,0.76],[0.46,0.68]]
 Dm=[[0.247,0.205],[0.122,0.14],[0.084,0.115],[0.061,0.102],[0.038,0.08],[0.029,0.053]]
 
-Dm[0]=[0.22,0.17]
-lnsig[1]=[0.19,0.40]
-Dm[1]=[0.122,0.13]
+# Dm[0]=[0.22,0.17]
+# lnsig[1]=[0.19,0.40]
+# Dm[1]=[0.122,0.13]
 
 # Define the nonlinear function
 def lognormal_func2(x, a,b,c,d,e,f):
@@ -141,7 +159,7 @@ if __name__ == "__main__":
 		plt.plot(data1[npsdStr[readThis]]['Dve'],data1[npsdStr[readThis]]['dN_dlogDve_cc'])
 		plt.xscale('log')
 		plt.xlim((0.01,2))
-		type1=2
+		type1=1
 		
 		if type1 == 2:
 			d=np.logspace(-2,0,100)
@@ -163,10 +181,11 @@ if __name__ == "__main__":
 					np.exp(-(np.log(d/dm2[i])**2.0)/(2*lnsig2[i]**2))
 			plt.plot(d,dNdlogD)
 			
-		else:
+		elif type1 == 1:
+			# in this one I want to find the ratio of the different modes
+			# so I think I am finding multiplier1, multiplier2
 			popt, pcov = curve_fit(lognormal_func,data1[npsdStr[readThis]]['Dve'], \
 				data1[npsdStr[readThis]]['dN_dlogDve_cc'], \
-				p0=[3000.0,600], method='lm') 
+				p0=[3500.0,600], method='trf') 
 			plt.plot(data1[npsdStr[readThis]]['Dve'], \
 				lognormal_func(np.array(data1[npsdStr[readThis]]['Dve']),popt))
-		
