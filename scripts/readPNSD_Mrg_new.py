@@ -9,34 +9,34 @@ from scipy.optimize import curve_fit
 readThis = 7
 
 fileNamePNSD_Mrg=[ \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp003-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp004-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp005-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp006-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp007-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp008-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp009-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp010-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp011-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp012-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp013-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp014-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp015-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp016-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv', \
-# 	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv', \
-# 	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp028-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets/Initial-PNSD/iSKYLAB01-Exp029-3-InitialPNSD-Mrg.csv']
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp003-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp004-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp005-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp006-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp007-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp008-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp009-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp010-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp011-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp012-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp013-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp014-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp015-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp016-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv', \
+# 	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv', \
+# 	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp028-3-InitialPNSD-Mrg.csv', \
+	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp029-3-InitialPNSD-Mrg.csv']
 
 npsdStr=['InitialPNSD-Exp002','InitialPNSD-Exp003','InitialPNSD-Exp004','InitialPNSD-Exp005',\
 	'InitialPNSD-Exp006','InitialPNSD-Exp007','InitialPNSD-Exp008','InitialPNSD-Exp009',\
@@ -67,6 +67,19 @@ kappa=[[0.61],[0.61],[0.61],[0.61],\
 	[0.61],[1.28],[1.28],[1.28],[0.067],[0.61],[0.61],[0.067,1.28],[0.067,1.28],\
 	[-1],[-1,1.28],[-1,1.28],[-2],[-2,1.28],[-2,1.28],\
 	[0.61],[0.61]]
+	
+# kappa=[[0.53],[0.53],[0.53],[0.53],\
+# 	[0.53,1.12],[0.53,1.12],[0.53,1.12],[0.53,1.12],[0.53,1.12],\
+# 	[0.53],[1.12],[1.12],[1.12],[0.067],[0.53],[0.53],[0.067,1.12],[0.067,1.12],\
+# 	[-1],[-1,1.12],[-1,1.12],[-2],[-2,1.12],[-2,1.12],\
+# 	[0.53],[0.53]]
+
+comp=[['AS'],['AS'],['AS'],['AS'],\
+	['AS','NaCl'],['AS','NaCl'],['AS','NaCl'],['AS','NaCl'],['AS','NaCl'],\
+	['AS'],['NaCl'],['NaCl'],['NaCl'],['FA'],['AS'],['AS'],['FA','NaCl'],['FA','NaCl'],\
+	['SDSA01'],['SDSA01','NaCl'],['SDSA01','NaCl'],['ATD03'],['ATD03','NaCl'],['ATD03','NaCl'],\
+	['AS'],['AS']]
+
 density=[[1770],[1770],[1770],[1770],\
 	[1770,2160],[1770,2160],[1770,2160],[1770,2160],[1770,2160],\
 	[1770],[2160],[2160],[2160],[1500],[1770],[1770],[1500,2160],[1500,2160],\
@@ -121,11 +134,54 @@ def readData(readThis = 3,npsdStr="InitialPNSD-Exp005"):
 		var1=[float(val)/np.log(10.0) for val in dtemp[1:-1]]
 		data1[npsdStr][name1]=np.array(var1)
 
+	keys1=data1[npsdStr].keys()
+	off1=2
+	num1=int(float(len(list(keys1)[2:]))/2)
+	keyList=list(keys1)
+
+	# change the key name if only one
+	if(num1==1):
+		temp=data1[npsdStr][keyList[off1+num1]]
+		del data1[npsdStr][keyList[off1+num1]]
+		keyList[off1+num1]=keyList[off1+num1].replace('Total',comp[readThis][0])
+		data1[npsdStr][keyList[off1+num1]]=temp.copy()
+
+
+	dm2=[0.26,0.05,0.2]
+	lnsig2=[0.2,0.2,0.3]
+	N2=[3000*0.6, \
+		3000*0.4,1000.]	
+	data1[npsdStr]['num1']=num1
+	data1[npsdStr]['keyList']=keyList.copy()
+	
+	for j in range(num1):
+		""" 
+			do the fit
+		"""
+# 			ind,=np.where(data1[npsdStr[readThis]][keyList[off1+num1+j]]>0.0)
+		ind=np.mgrid[0:len(data1[npsdStr][keyList[off1+num1+j]])]
+		popt, pcov = curve_fit(lognormal_func2, data1[npsdStr]['Dve'][ind],\
+			data1[npsdStr][keyList[off1+num1+j]][ind], \
+			p0=[N2[0], lnsig2[0], dm2[0], N2[1], lnsig2[1],dm2[1], N2[2], lnsig2[2],dm2[2]],\
+			bounds=([0.1,0.1,0.03,0.1,0.1,0.03,0.1,0.1,0.03],\
+				[5000,0.65,0.4,5000,0.65,0.4,5000,0.65,0.4]), \
+			method='trf') 
+		N2=[popt[0],popt[3],popt[6]]
+		lnsig2=[popt[1],popt[4],popt[7]]
+		dm2=[popt[2],popt[5],popt[8]]
+		
+		data1[npsdStr]['Nfit_' + keyList[off1+num1+j]]=N2.copy()
+		data1[npsdStr]['lnsigfit_' + keyList[off1+num1+j]]=lnsig2.copy()
+		data1[npsdStr]['dfit_' + keyList[off1+num1+j]]=dm2.copy()
+		
+	
 	return data1
 
 if __name__ == "__main__":
 	doAnalysis = True
+	off1=2
 	
+	d=np.logspace(-2,np.log10(2),100)
 	
 	if 'data1' in locals():
 		pass
@@ -135,47 +191,27 @@ if __name__ == "__main__":
 	for i in range(len(npsdStr)):
 		data2=readData(readThis=i,npsdStr=npsdStr[i])
 		data1[npsdStr[i]]=data2[npsdStr[i]].copy()
+
+		
 		"""	
 	if doAnalysis:
 		"""
 		plt.ion()
 		plt.figure()
-		keys1=data1[npsdStr[i]].keys()
-		off1=2
-		num1=int(float(len(list(keys1)[2:]))/2)
-		keyList=list(keys1)
-		d=np.logspace(-2,np.log10(2),100)
-		dm2=[0.26,0.05,0.2]
-		lnsig2=[0.2,0.2,0.3]
-		N2=[3000*0.6, \
-			3000*0.4,1000.]	
-		
-		
+		keyList=data1[npsdStr[i]]['keyList']
+		num1=data1[npsdStr[i]]['num1']
 		for j in range(num1):
 			plt.plot(data1[npsdStr[i]]['Dve'], \
 				data1[npsdStr[i]][keyList[off1+num1+j]])
 		
-		
 		for j in range(num1):
 			""" 
 				do the fit
-			"""
-# 			ind,=np.where(data1[npsdStr[readThis]][keyList[off1+num1+j]]>0.0)
-			ind=np.mgrid[0:len(data1[npsdStr[i]][keyList[off1+num1+j]])]
-			popt, pcov = curve_fit(lognormal_func2, data1[npsdStr[i]]['Dve'][ind],\
-				data1[npsdStr[i]][keyList[off1+num1+j]][ind], \
-				p0=[N2[0], lnsig2[0], dm2[0], N2[1], lnsig2[1],dm2[1], N2[2], lnsig2[2],dm2[2]],\
-				bounds=([0.1,0.1,0.03,0.1,0.1,0.03,0.1,0.1,0.03],\
-					[5000,0.65,0.4,5000,0.65,0.4,5000,0.65,0.4]), \
-				method='trf') 
+			"""			
+			N2=data1[npsdStr[i]]['Nfit_' + keyList[off1+num1+j]]
+			lnsig2=data1[npsdStr[i]]['lnsigfit_' + keyList[off1+num1+j]]
+			dm2=data1[npsdStr[i]]['dfit_' + keyList[off1+num1+j]]
 			dNdlogD=np.zeros(len(d))
-			N2=[popt[0],popt[3],popt[6]]
-			lnsig2=[popt[1],popt[4],popt[7]]
-			dm2=[popt[2],popt[5],popt[8]]
-			
-			data1[npsdStr[i]]['Nfit_' + keyList[off1+num1+j]]=N2.copy()
-			data1[npsdStr[i]]['lnsigfit_' + keyList[off1+num1+j]]=lnsig2.copy()
-			data1[npsdStr[i]]['dfit_' + keyList[off1+num1+j]]=dm2.copy()
 			
 			for k in range(len(dm2)):
 				dNdlogD=dNdlogD+ \
