@@ -415,7 +415,7 @@ if doAnalysis:
 	for i in range(len(batchSims)):
 		ind,=np.where(data1['MergedOPC-' + batchSims[i]]['Dp']>2)
 		data1['MergedOPC-' + batchSims[i]]['ndrop'][:]= \
-			np.nanmean(data1['MergedOPC-' + batchSims[i]]['Conc'][:,ind],axis=1)
+			np.nansum(data1['MergedOPC-' + batchSims[i]]['Conc'][:,ind],axis=1)*0.009839
 		cdnc1[i]=calc_average(cloud_times[batchSims[i]],\
 			data1['MeteoCPC-' + batchSims[i]],data1['MergedOPC-' + batchSims[i]])
 		
