@@ -27,6 +27,7 @@ runTheModel=True
 doAnalysis=True
 doThePlot=False
 readTheData=True
+exportTotalWater=True
 bmm_model_folder='/Users/mccikpc2/Dropbox/programming/fortran/bmm/'
 
 # AS this one is for the blue line with dip in it - what is the aerosol in run16 and 17?
@@ -45,7 +46,7 @@ batchSims=['Exp016','Exp017']
 batchSims=['Exp015','Exp018','Exp019']
 batchSims=['Exp015','Exp019']
 
-thisRun=6
+thisRun=5
 bS=[['Exp028','Exp006','Exp007'],['Exp028','Exp008','Exp009'],\
 	['Exp028','Exp010'],['Exp028','Exp011'],['Exp013','Exp014'],\
 	['Exp016','Exp017'],['Exp015','Exp019']]
@@ -124,6 +125,21 @@ if readTheData:
 	for i in range(len(readMeteoCPC.metStr)):
 		data2=readMeteoCPC.readData(readThis=i,metStr=readMeteoCPC.metStr[i])
 		data1[readMeteoCPC.metStr[i]]=data2[readMeteoCPC.metStr[i]].copy()
+		# calculate total water, RH equivalent
+		es=np.array(svp.svp(data1[readMeteoCPC.metStr[i]]['Tgw mean']+273.15,'buck2','liq'))
+		e=np.array(svp.svp(data1[readMeteoCPC.metStr[i]]['TDew']+273.15,'buck2','liq'))
+		data1[readMeteoCPC.metStr[i]]['qtot']= \
+			Ra/Rv*e/(data1[readMeteoCPC.metStr[i]]['Pressure']*100.-e)
+		data1[readMeteoCPC.metStr[i]]['qsat']= \
+			Ra/Rv*es/(data1[readMeteoCPC.metStr[i]]['Pressure']*100.-es)
+		data1[readMeteoCPC.metStr[i]]['rh_equiv']= \
+			data1[readMeteoCPC.metStr[i]]['qtot']/data1[readMeteoCPC.metStr[i]]['qsat']
+		ind,=np.where(np.isnan(data1[readMeteoCPC.metStr[i]]['qtot'][:]))
+		
+		if len(ind):
+			data1[readMeteoCPC.metStr[i]]['qtot'][ind]= \
+				data1[readMeteoCPC.metStr[i]]['qtot'][ind[0]-1]
+		
 	"""
 		OPC data
 	"""
@@ -137,7 +153,6 @@ if readTheData:
 	for i in range(len(readPNSD_Mrg_new.npsdStr)):
 		data2=readPNSD_Mrg_new.readData(readThis=i,npsdStr=readPNSD_Mrg_new.npsdStr[i])
 		data1[readPNSD_Mrg_new.npsdStr[i]]=data2[readPNSD_Mrg_new.npsdStr[i]].copy()
-
 
 for i in sat_times.keys():
 	interpConc=interp1d(data1['MeteoCPC-' + i]['Time'],\
@@ -226,6 +241,12 @@ def batchRuns(batchSims,sat_times,data1,winit):
 		for i in range(num1):
 			str1=str1+str(data1['MeteoCPC-' + batchSims[nn]]['Tgw mean'][i]+273.15) + ','
 		str1=str1+'\n'
+		
+		if exportTotalWater:
+			str1=str1+ '	qtot_chamber(1:' + str(num1) + ')   = '	
+			for i in range(num1):
+				str1=str1+str(data1['MeteoCPC-' + batchSims[nn]]['qtot'][i]) + ','
+			str1=str1+'\n'
 
 		n=str(nn)		
 		print('Run number '+ n.zfill(3))
@@ -307,8 +328,8 @@ def batchRuns(batchSims,sat_times,data1,winit):
 			changeFile(tmpFile,tmpFile,\
 					'n_aer1(1:3,2:2)        = 0e6, 0.e6, 0.001e6,d_aer1(1:3,2:2)        = 100e-9   , 1e-9, 1.e-9, sig_aer1(1:3,2:2)      = 0.5   , 0.3, 0.3, ',\
 					str1)
-		vals1[nn]=np.sum(Nsub1[0:2])
-		vals2[nn]=np.sum(Nsub2[0:2])
+		vals1[nn]=np.sum(Nsub1[0:])
+		vals2[nn]=np.sum(Nsub2[0:])
 		
 		
 		str1='density_core1(1:4) = '
@@ -384,6 +405,13 @@ if runTheModel:
 	batchSims=bS[thisRun]
 	
 	vals1,vals2=batchRuns(batchSims,sat_times,data1,speed_w[thisRun])
+	
+	vals1=np.array([vals1[i]* \
+		sat_times[batchSims[i]]['satP']/Ra/sat_times[batchSims[i]]['satT'] \
+		for i in range(len(vals1))])
+	vals2=np.array([vals2[i]* \
+		sat_times[batchSims[i]]['satP']/Ra/sat_times[batchSims[i]]['satT'] \
+		for i in range(len(vals2))])
 
 if doAnalysis:
 	"""
@@ -407,7 +435,9 @@ if doAnalysis:
 # 			(nc['time'][:]<=cloud_times[batchSims[i]]['time'][1]))
 			
 # 		ndrop[i] = np.max(nc['ndrop'][ind]*nc['p'][ind]/Ra/nc['t'][ind])/1e6
-		ndrop[i] = np.max(conc*nc['p'][:]/Ra/nc['t'][:])/1e6
+		ind,=np.where((nc['time'][:]>cloud_times[batchSims[i]]['time'][0]) & \
+			(nc['time'][:]<=cloud_times[batchSims[i]]['time'][1]))
+		ndrop[i] = np.max(conc[ind]*nc['p'][ind]/Ra/nc['t'][ind])/1e6
 		
 		nc.close()
 		
@@ -421,8 +451,9 @@ if doAnalysis:
 		
 		
 		
+		
 	plt.ion()
-	plt.figure()
+	fig=plt.figure(figsize=(15, 4))
 	if type1[thisRun]==1:
 		x=vals1/1e6
 		str1='Aerosol particles added (cm$^{-3}$)'
@@ -430,7 +461,7 @@ if doAnalysis:
 		x=vals2/1e6
 		str1='NaCl particles added (cm$^{-3}$)'
 		
-	plt.subplot(121)
+	plt.subplot(131)
 	plt.plot(x,ndrop/ndrop[0],'.-',ms=10)	
 	plt.plot(x,cdnc1/cdnc1[0],'.-',ms=10)
 	plt.xlabel(str1)
@@ -438,11 +469,28 @@ if doAnalysis:
 	plt.legend(['model','data'])
 	for i in range(len(x)):
 		plt.text(x[i],ndrop[i]/ndrop[0]+0.2,str(round(vals1[i]/1e6,2)))
+	for i in range(len(x)):
+		plt.text(x[i],ndrop[i]/ndrop[0]-0.2,str(round(vals2[i]/1e6,2)),color='green')
 	plt.grid()
 	y1=plt.ylim()
-	plt.ylim((0,y1[1]))
-	
-	plt.subplot(122)
+	plt.ylim((0,np.max([y1[1],ndrop[i]/ndrop[0]+0.3,cdnc1[i]/cdnc1[0]+0.3])))
+	x1=plt.xlim()
+	plt.xlim((x1[0],x1[1]+0.2*(x1[1]-x1[0])))
+
+	# activated fraction
+	plt.subplot(132)
+	plt.plot(x,ndrop*1e6/(vals1+vals2),'.-',ms=10)	
+	plt.plot(x,cdnc1*1e6/(vals1+vals2),'.-',ms=10)
+	plt.xlabel(str1)
+	plt.ylabel('Activated Fraction')
+	plt.legend(['model','data'])
+
+	plt.grid()
+	plt.xlim((x1[0],x1[1]+0.2*(x1[1]-x1[0])))
+	plt.ylim((0,1))
+
+	# total number	
+	plt.subplot(133)
 	plt.plot(x,ndrop,'.-',ms=10)	
 	plt.plot(x,cdnc1,'.-',ms=10)
 	plt.xlabel(str1)
@@ -450,5 +498,5 @@ if doAnalysis:
 	plt.legend(['model','data'])
 
 	plt.grid()
-	y1=plt.ylim()
-	plt.ylim((0,y1[1]))
+	#plt.ylim((0,y1[1]))
+	fig.tight_layout()
