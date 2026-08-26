@@ -4,6 +4,11 @@ import readMeteoCPC
 import readOPC_Merged
 import readModel
 import svp
+import iskylab_config as cfg
+
+# readModel also returns chamber/fallout loss diagnostics when those variables
+# are present in the NetCDF file; this plotting script keeps the historical
+# six-panel comparison unchanged.
 
 def doPlot(readThisMet,readThisOPC,metStr,opcStr,modelFile,modelStr,title1):
 	dataMet=readMeteoCPC.readData(readThis=readThisMet,metStr=metStr)
@@ -32,7 +37,7 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,modelFile,modelStr,title1):
 	ax.set_yticks(np.mgrid[-10:10:2])
 	ax.set_ylim((-12,6))
 	ax.grid()
-	ax.set_ylabel('Temperature ($^\circ$C)')
+	ax.set_ylabel(r'Temperature ($^\circ$C$)')
 	ax.text(0.4,0.1,'(b) Temperature',transform=ax.transAxes)
 	ax.legend(['AIDA','BMM'])
 	xl=ax.get_xlim()
@@ -60,7 +65,7 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,modelFile,modelStr,title1):
 	ax.set_ylim((-2,16))
 	ax.set_xlim(xl)
 	ax.grid()
-	ax.set_ylabel('$D_{eff}$ ($\mu$m)')
+	ax.set_ylabel(r'$D_{eff}$ ($\mu$m)')
 	ax.text(0.4,0.9,'(d) Effective diam.',transform=ax.transAxes)
 	ax.legend(['AIDA','BMM'])
 
@@ -123,7 +128,7 @@ if __name__=="__main__":
 # 		'Experiment 006: AS (0.01 wt%) + NaCl (0.1 wt%)')
 # 	plt.savefig('/tmp/exp6.png')
 	doPlot(4,4,'MeteoCPC-Exp006','MergedOPC-Exp006', \
-		'/tmp/mccikpc2/output001.nc','model-Exp006',\
+		str(cfg.OUTPUT_ROOT / 'output001.nc'),'model-Exp006',\
 		'Experiment 006: AS (0.01 wt%) + NaCl (0.1 wt%)')
 	plt.savefig('/tmp/exp6.png')
 	# exoeriment 11, AS

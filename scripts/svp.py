@@ -44,10 +44,11 @@ def svp(T,flag,flag2):
           return [610.7*exp((22.44*x-6.1186e3)/(x-0.75)) for x in T]
 
        elif flag.lower()=='clausius':
-          return [611.73*exp(2.501e6/461.5*(1./273.16-1./x)) for x in T]
+          # Sublimation latent heat for ice.
+          return [611.73*exp(2.834e6/461.5*(1./273.16-1./x)) for x in T]
 
        else :
-          print('Error no method by ' % flag)
+          raise ValueError('Unknown saturation-vapour-pressure method: %s' % flag)
 
 
    # liquid svps
@@ -75,8 +76,8 @@ def svp(T,flag,flag2):
        elif flag.lower()=='wmo':
           return [100.*10.**( 10.79574 *(1.-273.16/x)                              
                     - 5.02800 *log10(x/273.16) 
-                    + 1.50475e-4 *(1 - 10.*(-8.2969*(x/273.16-1.))) 
-                    + 0.42873e-3 *(10.*(+4.76955*(1.-273.16/x)) - 1.) 
+                    + 1.50475e-4 *(1 - 10.**(-8.2969*(x/273.16-1.))) 
+                    + 0.42873e-3 *(10.**(+4.76955*(1.-273.16/x)) - 1.) 
                     + 0.78614 ) for x in T]
 
        elif flag.lower()=='hyland':
@@ -98,16 +99,17 @@ def svp(T,flag,flag2):
           return [100.*10.**(7.5 *(x-273.15) / (x-273.15+237.3) + 0.7858  ) for x in T]
 
        elif flag.lower()=='clausius':
-          return [611.73*exp(2.834e6/461.5*(1./273.16-1./x)) for x in T]
+          # Vaporisation latent heat for liquid water.
+          return [611.73*exp(2.501e6/461.5*(1./273.16-1./x)) for x in T]
 
        elif flag.lower()=='magnus':
           return [610.7*exp((17.38*x-4.7473e3)/(x-34.15)) for x in T]
 
        else :
-          print ('Error no method by '%flag)
+          raise ValueError('Unknown saturation-vapour-pressure method: %s' % flag)
 
    else :
-      print('Error no phase called ' %flag2)
+      raise ValueError('Unknown saturation-vapour-pressure phase: %s' % flag2)
 
 ###########################################################
 if __name__ == "__main__":
@@ -119,7 +121,7 @@ if __name__ == "__main__":
    rc('text',usetex = True)
 
 
-   T=[273.15-(273.15-243.15)/100.*x for x in xrange(0,99,1)]
+   T=[273.15-(273.15-243.15)/100.*x for x in range(0,99,1)]
 
    plt.ion()
    fig=plt.figure()

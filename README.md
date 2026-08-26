@@ -1,1 +1,156 @@
-# iskylab-analysis
+# iSKYLAB analysis and BMM batch driver
+
+This repository reads the iSKYLAB experiment files in `./iSKYLAB-data`, fits the
+initial aerosol PSDs, generates BMM namelists, runs experiment batches, and
+compares model output with the chamber measurements.
+
+## Current BMM chamber interface
+
+The maintained entry point is `scripts/dataAnalysis_new.py`.  Model/chamber
+controls are collected in `scripts/iskylab_config.py`; the analysis script no
+longer edits exact copied strings from one historical namelist.
+
+The batch driver supports the current BMM chamber controls:
+
+- independent pressure, gas-temperature and total-water forcing;
+- chamber BL mixing `0=off`, `1=homogeneous`, `2=extreme inhomogeneous`;
+- BL temperature from either a fixed gas-wall offset or the measured
+  `Tww_mean` wall-temperature time series;
+- sigmoid drone-fan particle loss (`kmax`, `D50`, exponent, RPM);
+- Lai-Nazaroff non-gravitational wall deposition (`u*` plus chamber geometry);
+- independent generic gravitational fallout/sedimentation.
+
+The chamber geometry defaults to a 2.0 m diameter × 2.5 m high cylinder.  The
+same 2.5 m height is written as the generic residence depth for clarity; in a
+chamber run the updated BMM uses `chamber_height` as `V/A_floor` for fallout.
+
+## Running
+
+Set the BMM location either by editing `scripts/iskylab_config.py` or, preferably,
+with an environment variable:
+
+```bash
+export BMM_MODEL_FOLDER=/path/to/bmm
+```
+
+Then from `scripts/` run, for example:
+
+```bash
+python dataAnalysis_new.py --group 6
+```
+
+Useful options are:
+
+```text
+--group N       select an experiment group from experiment_metadata.py
+--no-run        analyse existing /tmp outputs without rerunning BMM
+--no-analysis   generate/run namelists only
+--no-plot       suppress the summary plot
+```
+
+Generated namelists and NetCDF files are written to `/tmp/$USER` by default.
+
+
+## Chamber forcing smoothing
+
+Short-period noise in the measured gas temperature can create unrealistically
+large alternating heating/cooling tendencies in the BMM and repeatedly move
+aerosol/droplets across saturation and activation thresholds.  The batch driver
+therefore supports Savitzky-Golay smoothing of the **forcing variables only**.
+It is enabled by default in `scripts/iskylab_config.py`:
+
+```python
+SMOOTH_CHAMBER_FORCING = True
+CHAMBER_SMOOTH_TEMP_WINDOW = 21.0
+CHAMBER_SMOOTH_WALL_TEMP_WINDOW = 21.0
+CHAMBER_SMOOTH_PRESSURE_WINDOW = 21.0
+CHAMBER_SMOOTH_POLYORDER = 2
+```
+
+The windows are in seconds, not samples.  The code infers the median sampling
+interval for each experiment; if timestamps are noticeably irregular it
+interpolates to a uniform median-dt grid for filtering and then maps the result
+back onto the original time coordinate.  SciPy's `mode="interp"` treatment is
+used at the ends to avoid artificial padding.
+
+The following working fields are smoothed before namelist generation:
+
+- `Tgw mean` -> `temp_chamber`;
+- `Tww mean` -> `wall_temp_chamber` when BL temperature mode 1 is used;
+- `Pressure` -> `press_chamber`.
+
+Dew point and particle observations are **not** smoothed by this option.  The
+raw P/T observations are retained in memory as `*_raw`, with the gap-filled
+pre-filter signal retained as `*_filled`.
+
+With `SAVE_FORCING_SMOOTHING_DIAGNOSTICS=True`, the driver writes one diagnostic
+plot per experiment plus `forcing-smoothing-summary.csv` under
+`/tmp/$USER/forcing_smoothing/`.  Each plot compares raw and smoothed gas/wall
+temperatures, explicitly shows `Twall-Tgas`, and compares raw/smoothed pressure.
+The CSV reports the effective window, sampling interval, timestamp irregularity,
+and RMS/maximum smoothing corrections.  Check these diagnostics when changing
+the window; 11, 21 and 31 s are sensible sensitivity values for nominal 1 Hz
+records.
+
+To generate only these diagnostics without running or analysing the BMM, use:
+
+```bash
+python dataAnalysis_new.py --no-run --no-analysis --no-plot
+```
+
+## Water-variable convention
+
+`TDew` is converted to a **vapour mixing ratio**.  It is not silently labelled
+as total water.  The default diagnostic `qtot_chamber` is
+
+```text
+qtot = qv(dew point) + ql(OPC)
+```
+
+with OPC LWC interpolated onto the chamber meteo time grid.  If the dew-point
+instrument is known to measure an evaporated total-water sample instead, set
+`QTOT_DATA_MODE = "dewpoint_only"` explicitly.
+
+`qtot_chamber` can be written without being used as forcing.  `FORCE_QTOT` is
+off by default because the total-water interpretation is less certain and
+because forcing it while also applying chamber sinks can double-count water
+loss.
+
+## Initial RH and aerosol normalisation
+
+Two choices are exposed in `iskylab_config.py`:
+
+- `INITIAL_RH_METHOD="cloud_onset"` preserves the historical method of choosing
+  initial vapour so the measured P/T trajectory reaches saturation at the
+  prescribed cloud-onset time if no pre-cloud water exchange occurs;
+- `INITIAL_RH_METHOD="dewpoint"` uses the measured t=0 dew point directly.
+
+Aerosol normalisation can use CPC at t=0 or at cloud onset.  `t0` is recommended
+when fan/wall/fallout losses are active because using cloud-onset CPC and then
+modelling pre-cloud loss would double represent that loss.
+
+## Important code fixes in this revision
+
+- Removed the obsolete `chamber_override` workflow.
+- Removed all hard-coded `n_levels_c=1853` and giant chamber-array replacement
+  strings.  `&chamber_spec` is regenerated to the actual experiment length.
+- Namelist variables are edited by name and missing variables now raise errors
+  instead of silently leaving template values unchanged.
+- Fixed fallback PNSD diameter units: fitted/fallback diameters are held in µm
+  and converted to metres exactly once.
+- Fixed NaN filling for chamber water/dew-point series; missing values are
+  interpolated rather than all being assigned the value before the first NaN.
+- Corrected the air-density parentheses and double-density factor in
+  `mixingAnalysis.py`, and corrected the plot-axis labels.
+- Made OPC effective diameter safe for empty spectra.
+- Updated `readModel.py` to expose the new BL/fan/wall/fallout diagnostics when
+  present.
+- Fixed dormant `svp.py` errors in the WMO power terms, Clausius latent heats,
+  Python-3 range use and invalid-method error handling.
+- Data paths are resolved from the repository rather than from the current
+  working directory.
+
+## Dependencies
+
+See `requirements.txt`.  The repository does not include the experiment data
+or the BMM executable/build dependencies.

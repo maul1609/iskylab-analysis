@@ -47,10 +47,12 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,title1,ax):
 	thetaq=theta*np.exp(2.5e6*vmr/ \
 		(1005*( dataMet[metStr]['Tgw mean']+273.15)))
 	
-	# total water
-	lwmr=dataOPC[opcStr]['lwc']/rhoa/1000.
-	vmr=vmr+lwmr
-	plt.scatter(vmr, thetaq, c=lwmr, cmap='viridis')
+	# Total airborne water.  Dew point gives vapour mixing ratio; OPC LWC is
+	# interpolated onto the meteo time grid and converted from g m-3 to kg kg-1.
+	lwc_interp=np.interp(dataMet[metStr]['Time'],dataOPC[opcStr]['Time'],dataOPC[opcStr]['lwc'])
+	lwmr=lwc_interp/rhoa/1000.
+	qtot=vmr+lwmr
+	plt.scatter(qtot, thetaq, c=lwmr, cmap='viridis')
 	plt.clim((0,0.3e-3))
 	plt.colorbar()
 

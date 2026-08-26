@@ -1,42 +1,49 @@
+"""Read and fit iSKYLAB initial particle-number size distributions.
+
+Measured component PSDs are represented by up to three lognormal submodes.
+Fitted diameters are kept in micrometres; conversion to SI metres is performed
+only by the BMM namelist generator.
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+import iskylab_config as cfg
 
-# derive fits for each individual aeroosl PSD
-# calculate ratios for each case
-# for each individual fit recalculate based on slip correction
-# now you have initial conditions
+# Fit each measured component PSD with up to three lognormal submodes.
+# Diameters read/fitted here are in micrometres; the batch namelist generator
+# performs the single conversion to metres when writing BMM aerosol input.
 readThis = 7
 
 fileNamePNSD_Mrg=[ \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp003-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp004-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp005-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp006-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp007-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp008-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp009-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp010-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp011-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp012-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp013-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp014-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp015-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp016-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv', \
-# 	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv', \
-# 	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp028-3-InitialPNSD-Mrg.csv', \
-	'../iSKYLAB-data/Datasets-V2/Initial-PNSD/iSKYLAB01-Exp029-3-InitialPNSD-Mrg.csv']
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp002-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp003-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp004-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp005-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp006-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp007-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp008-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp009-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp010-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp011-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp012-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp013-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp014-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp015-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp016-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp017-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp018-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp019-3-InitialPNSD-Mrg.csv'), \
+# 	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp020-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp021-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp022-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp023-3-InitialPNSD-Mrg.csv'), \
+# 	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp024-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp025-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp026-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp027-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp028-3-InitialPNSD-Mrg.csv'), \
+	str(cfg.DATA_ROOT / 'Datasets-V2/Initial-PNSD/iSKYLAB01-Exp029-3-InitialPNSD-Mrg.csv')]
 
 npsdStr=['InitialPNSD-Exp002','InitialPNSD-Exp003','InitialPNSD-Exp004','InitialPNSD-Exp005',\
 	'InitialPNSD-Exp006','InitialPNSD-Exp007','InitialPNSD-Exp008','InitialPNSD-Exp009',\
@@ -60,7 +67,7 @@ whichPSD=[[1],[1],[5],[1],\
 targetConc=[[500],[5000],[5000],[3000],\
 	[3000,600],[3000,2000],[3000,2000],[3000,4000],[3000,4000],\
 	[5000],[2000],[600],[2000],[3000],[3000],[3000],[3000,600],[3000,2000],\
-	[1000],[3000,2000],[3000,2000],1000,[1000,4000],[1000,10000],\
+	[1000],[3000,2000],[3000,2000],[1000],[1000,4000],[1000,10000],\
 	[3000],[3000]]
 kappa=[[0.61],[0.61],[0.61],[0.61],\
 	[0.61,1.28],[0.61,1.28],[0.61,1.28],[0.61,1.28],[0.61,1.28],\

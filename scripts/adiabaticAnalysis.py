@@ -90,7 +90,8 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,title1,ax):
 		
 		plt.plot(dataOPC[opcStr]['Time'],vmr)
 		rhoa=dataMet[metStr]['Pressure']*100./(dataMet[metStr]['Tgw mean']+273.15)/Ra
-		plt.plot(dataOPC[opcStr]['Time'],vmr+dataOPC[opcStr]['lwc']/rhoa/1000.)
+		lwc_interp=np.interp(dataMet[metStr]['Time'],dataOPC[opcStr]['Time'],dataOPC[opcStr]['lwc'])
+		plt.plot(dataMet[metStr]['Time'],vmr+lwc_interp/rhoa/1000.)
 		plt.grid()
 	elif plot==4:
 		#temp=theta0*(dataMet[metStr]['Pressure']/1000.)**0.286
@@ -106,7 +107,8 @@ def doPlot(readThisMet,readThisOPC,metStr,opcStr,title1,ax):
 		rhoa=dataMet[metStr]['Pressure']*100./(dataMet[metStr]['Tgw mean']+273.15)/Ra
 		plt.plot(dataMet[metStr]['Time'],vmr)
 		plt.plot(dataMet[metStr]['Time'],vmr[0]*np.ones(len(vmr)))
-		vmr=vmr+dataOPC[opcStr]['lwc']/rhoa/1000.
+		lwc_interp=np.interp(dataMet[metStr]['Time'],dataOPC[opcStr]['Time'],dataOPC[opcStr]['lwc'])
+		vmr=vmr+lwc_interp/rhoa/1000.
 		plt.plot(dataMet[metStr]['Time'],vmr)
 		plt.plot(dataMet[metStr]['Time'],vmr2)
 		plt.plot(dataMet[metStr]['Time'],vmr3)
