@@ -77,38 +77,49 @@ FORCE_QTOT = False
 QTOT_DATA_MODE = "vapour_plus_opc"
 
 # Initial RH method:
-#   "cloud_onset" : historical method.  Infer qv so saturation occurs at the
-#                   manually supplied cloud-onset time if no pre-cloud water
-#                   exchange occurs.
+#   "cloud_onset" : infer qv so the model reaches liquid saturation at a
+#                   configurable target time along the measured P/T forcing.
+#                   With the controls below left at their defaults this is the
+#                   historical CLOUD_ONSET time from experiment_metadata.py.
 #   "dewpoint"    : use the measured dew point at t=0 directly.
 INITIAL_RH_METHOD = "cloud_onset"
+
+# Model saturation-target controls used only when INITIAL_RH_METHOD is
+# "cloud_onset".  These alter the initial vapour mixing ratio; they do NOT move
+# the observed cloud-onset marker/window used in the comparison plots.
+#
+# The global shift is useful for systematic sensitivity tests.  Per-experiment
+# absolute overrides take precedence.  Values are seconds from the experiment
+# time origin, e.g. {"Exp005": 6.6*60.0}.
+MODEL_SATURATION_TIME_SHIFT_S = 0.0
+MODEL_SATURATION_TIME_OVERRIDES_S = {'Exp006': 9. * 60.0}
 
 # Aerosol number normalisation:
 #   "t0"          : CPC concentration at t=0.  Recommended when modelling
 #                   pre-cloud particle loss (fan, walls or fallout).
 #   "cloud_onset" : historical choice; constrains aerosol immediately before
 #                   activation and therefore hides any pre-cloud loss.
-AEROSOL_INIT_TIME = "t0"
+AEROSOL_INIT_TIME = "cloud_onset"
 
 # ---------------------------------------------------------------------------
 # Chamber boundary-layer treatment
 # ---------------------------------------------------------------------------
 # 0=off, 1=homogeneous, 2=extreme inhomogeneous.
-CHAMBER_BL_MIX = 0
-CHAMBER_BL_TAU = 60.0  # s
+CHAMBER_BL_MIX = 2
+CHAMBER_BL_TAU = 50.0  # s
 
 # 0: T_BL = T_gas + CHAMBER_BL_TEMP_OFFSET
 # 1: use measured wall temperature (Tww_mean) written as wall_temp_chamber(t)
-CHAMBER_BL_TEMP_MODE = 0
-CHAMBER_BL_TEMP_OFFSET = -0.2  # K, used only in mode 0
+CHAMBER_BL_TEMP_MODE = 1
+CHAMBER_BL_TEMP_OFFSET = -0.32  # K, used only in mode 0
 
 # ---------------------------------------------------------------------------
 # Drone-fan blade collection
 # ---------------------------------------------------------------------------
 # 0=off, 1=saturating sigmoid in current particle diameter.
-CHAMBER_FAN_LOSS = 0
-CHAMBER_FAN_LOSS_KMAX = 1.5e-2      # s-1
-CHAMBER_FAN_LOSS_D50_REF = 25.0e-6   # m at reference RPM
+CHAMBER_FAN_LOSS = 1
+CHAMBER_FAN_LOSS_KMAX = 1.9e-3 #1.5e-3      # s-1
+CHAMBER_FAN_LOSS_D50_REF = 0.1e-6 #10.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
 CHAMBER_FAN_RPM_REF = 25000.0
@@ -119,8 +130,8 @@ CHAMBER_FAN_RPM_REF = 25000.0
 # 0=off, 1=Lai-Nazaroff deposition to cylindrical side walls + ceiling.
 # The floor is not included here because gravitational floor loss is handled
 # independently by the generic BMM fallout scheme.
-CHAMBER_WALL_LOSS = 0
-CHAMBER_WALL_USTAR = 0.02  # m s-1
+CHAMBER_WALL_LOSS = 1
+CHAMBER_WALL_USTAR = 0.02 #0.02  # m s-1
 CHAMBER_DIAMETER = 2.0     # m
 CHAMBER_HEIGHT = 2.5       # m
 
@@ -141,9 +152,33 @@ SYNTHETIC_UPDRAFT = False
 # ---------------------------------------------------------------------------
 # Single-experiment model/observation diagnostics
 # ---------------------------------------------------------------------------
-# Minimum OPC/model wet diameter used for cloud-drop bulk moments.  The native
-# PSD plots retain the complete OPC diameter range.
+# Minimum OPC/model wet diameter used for cloud-drop bulk moments.
 SINGLE_COMPARE_DROP_MIN_UM = 2.0
+
+# Liquid-water comparison used for the single-experiment ql score/lag:
+#   "above_min" : recommended instrument-equivalent comparison.  Reconstruct
+#                 liquid-equivalent water from the observed WELAS PSD and the
+#                 BMM nwat+dwet population using all particles with
+#                 Dwet > SINGLE_COMPARE_DROP_MIN_UM.  WELAS is mimicked by
+#                 interpreting the entire measured/model wet sphere as water.
+#   "total"     : compare the WELAS reader's total LWC with the BMM's native
+#                 total liquid-water mixing ratio (model["ql"]).  This is useful
+#                 diagnostically, but the sampled size ranges are not identical.
+#
+# Both total and >Dmin curves/scores are always calculated and written; this
+# option only chooses which pair drives the headline ql lag/NRMSE metrics.
+SINGLE_COMPARE_QL_MODE = "above_min"
+
+# Direct WELAS/BMM PSD comparison grid.  WELAS has far more size channels than
+# the BMM has independent moving particle populations; putting each BMM point
+# onto the native WELAS grid therefore produces a visually sparse/striped model
+# panel.  Both observation and model are instead conservatively rebinned onto
+# this common logarithmic diagnostic grid for the comparison figure.
+#
+# Set MIN/MAX to None to use the native WELAS edge range for each experiment.
+SINGLE_COMPARE_PSD_NBINS = 48
+SINGLE_COMPARE_PSD_MIN_UM = None
+SINGLE_COMPARE_PSD_MAX_UM = None
 
 # Diagnostic-only time-lag search.  Absolute-time comparisons are always
 # retained; this bounded lag is reported separately to identify likely
