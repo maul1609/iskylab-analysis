@@ -120,9 +120,12 @@ loss.
 
 Two choices are exposed in `iskylab_config.py`:
 
-- `INITIAL_RH_METHOD="cloud_onset"` preserves the historical method of choosing
-  initial vapour so the measured P/T trajectory reaches saturation at the
-  prescribed cloud-onset time if no pre-cloud water exchange occurs;
+- `INITIAL_RH_METHOD="cloud_onset"` chooses initial vapour so the measured P/T
+  trajectory reaches saturation at a configurable model target time.  With
+  `MODEL_SATURATION_TIME_SHIFT_S=0` and an empty
+  `MODEL_SATURATION_TIME_OVERRIDES_S`, this is the historical observed cloud
+  onset from `experiment_metadata.py`.  The model target can be shifted without
+  moving the observational onset marker/window;
 - `INITIAL_RH_METHOD="dewpoint"` uses the measured t=0 dew point directly.
 
 Aerosol normalisation can use CPC at t=0 or at cloud onset.  `t0` is recommended
@@ -163,14 +166,28 @@ The driver now supports a dedicated development/validation mode, for example:
 python dataAnalysis_new.py --experiment Exp005
 ```
 
-or simply `--experiment 5`.  This generates one named namelist/output under
+or simply `--experiment 5`.  A one-off saturation-timing sensitivity can be
+requested without editing metadata, for example:
+
+```bash
+python dataAnalysis_new.py --experiment Exp005 --saturation-time-min 6.6
+```
+
+This changes the **model saturation target** used to infer the initial vapour
+amount.  It does not move the observed cloud-onset marker or curated comparison
+window.  For persistent or batch sensitivities use
+`MODEL_SATURATION_TIME_SHIFT_S` and `MODEL_SATURATION_TIME_OVERRIDES_S` in
+`iskylab_config.py`.
+
+The single-run workflow generates one named namelist/output under
 `/tmp/$USER/single_comparison/` and writes:
 
 - `comparison-Exp005.png`: pressure and temperature forcing, liquid-water
   mixing ratio, droplet number, effective diameter, relative dispersion and
   cumulative chamber/fallout loss diagnostics;
-- `psd-Exp005.png`: observed OPC and BMM wet-particle size distributions on the
-  **same OPC diameter grid and colour scale**;
+- `psd-Exp005.png`: observed WELAS and BMM wet-particle size distributions
+  conservatively rebinned onto the **same configurable coarse log-D grid and
+  colour scale**;
 - `metrics-Exp005.csv`: cloud-window scores including ql, number, effective
   diameter and relative dispersion, plus a bounded diagnostic ql lag.
 
@@ -189,10 +206,11 @@ default).
 
 The updated BMM writes each native warm-bin number together with its current
 wet diameter.  Those native bins are **not** interpreted as fixed wet-size
-intervals.  At every model output time the analysis conservatively histograms
-`(nwat,dwet)` onto the fixed OPC edges and then divides by `Delta log10D`.
-This is preferable to inventing moving wet-bin widths from BMM array index and
-remains valid if native wet diameters become non-uniform or non-monotonic.
+intervals.  For the direct WELAS/BMM figure, the optical PSD is first
+number-conservatively integrated onto a configurable coarse common log-D grid,
+and `(nwat,dwet)` is histogrammed onto those same edges before division by
+`Delta log10D`.  This avoids giving the BMM artificial WELAS-scale resolution
+while retaining an apples-to-apples diagnostic grid.
 
 For number concentration, the single-run plot deliberately shows both the BMM
 activation diagnostic and an OPC-like BMM count above the selected wet-diameter
@@ -220,3 +238,20 @@ python dataAnalysis_new.py --group 6
 
 `--group` and `--experiment` are mutually exclusive.  If neither is supplied,
 the historical `THIS_RUN` group is used.
+
+### Coarse common WELAS/BMM comparison grid
+
+The WELAS has many more optical size channels than there are independent BMM
+moving particle populations.  The direct comparison therefore no longer puts
+each BMM population into the native WELAS channels.  Instead both datasets are
+number-conservatively rebinned to a common logarithmic grid controlled by:
+
+```python
+SINGLE_COMPARE_PSD_NBINS = 48
+SINGLE_COMPARE_PSD_MIN_UM = None
+SINGLE_COMPARE_PSD_MAX_UM = None
+```
+
+`None` uses the measured WELAS lower/upper edge for that experiment.  The
+model-only full PSD plot remains separate and still uses the broader
+`SINGLE_MODEL_*_PSD_*` grid.

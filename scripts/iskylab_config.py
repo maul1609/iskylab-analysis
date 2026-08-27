@@ -104,9 +104,16 @@ AEROSOL_INIT_TIME = "cloud_onset"
 # ---------------------------------------------------------------------------
 # Chamber boundary-layer treatment
 # ---------------------------------------------------------------------------
-# 0=off, 1=homogeneous, 2=extreme inhomogeneous.
-CHAMBER_BL_MIX = 2
-CHAMBER_BL_TAU = 50.0  # s
+# Boundary-layer mixing closure:
+#   0 = off
+#   1 = homogeneous bulk adjustment
+#   2 = uniform extreme inhomogeneous: the same fraction of every activated
+#       size bin disappears completely
+#   3 = D2-law-weighted extreme inhomogeneous: complete-evaporation fractions
+#       are biased toward smaller droplets as m_w^(-2/3), capped at 1; the
+#       coefficient is solved internally from the thermodynamic RH deficit.
+CHAMBER_BL_MIX = 3
+CHAMBER_BL_TAU = 43.0  # s
 
 # 0: T_BL = T_gas + CHAMBER_BL_TEMP_OFFSET
 # 1: use measured wall temperature (Tww_mean) written as wall_temp_chamber(t)
@@ -119,7 +126,7 @@ CHAMBER_BL_TEMP_OFFSET = -0.32  # K, used only in mode 0
 # 0=off, 1=saturating sigmoid in current particle diameter.
 CHAMBER_FAN_LOSS = 1
 CHAMBER_FAN_LOSS_KMAX = 1.9e-3 #1.5e-3      # s-1
-CHAMBER_FAN_LOSS_D50_REF = 0.1e-6 #10.0e-6   # m at reference RPM
+CHAMBER_FAN_LOSS_D50_REF = 20e-6 #10.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
 CHAMBER_FAN_RPM_REF = 25000.0
