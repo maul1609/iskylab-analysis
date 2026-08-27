@@ -108,7 +108,7 @@ CHAMBER_BL_TEMP_OFFSET = -0.2  # K, used only in mode 0
 # 0=off, 1=saturating sigmoid in current particle diameter.
 CHAMBER_FAN_LOSS = 0
 CHAMBER_FAN_LOSS_KMAX = 1.5e-2      # s-1
-CHAMBER_FAN_LOSS_D50_REF = 4.0e-6   # m at reference RPM
+CHAMBER_FAN_LOSS_D50_REF = 25.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
 CHAMBER_FAN_RPM_REF = 25000.0
@@ -130,10 +130,37 @@ CHAMBER_HEIGHT = 2.5       # m
 # In a chamber run the updated BMM uses CHAMBER_HEIGHT as V/A_floor, so the
 # value of residence_depth in the template is not the controlling chamber
 # length scale.  It is still set consistently by the generator for clarity.
-FALLOUT_FLAG = False
+FALLOUT_FLAG = True
 RESIDENCE_DEPTH = CHAMBER_HEIGHT
 
 # Synthetic updraft mode reproduces the old speedFlag behaviour.  It disables
 # measured chamber thermodynamic forcing and chamber-specific BL/fan/wall
 # processes, while leaving generic BMM options (e.g. fallout) configurable.
 SYNTHETIC_UPDRAFT = False
+
+# ---------------------------------------------------------------------------
+# Single-experiment model/observation diagnostics
+# ---------------------------------------------------------------------------
+# Minimum OPC/model wet diameter used for cloud-drop bulk moments.  The native
+# PSD plots retain the complete OPC diameter range.
+SINGLE_COMPARE_DROP_MIN_UM = 2.0
+
+# Diagnostic-only time-lag search.  Absolute-time comparisons are always
+# retained; this bounded lag is reported separately to identify likely
+# instrument/sample-line delay rather than silently shifting the observations.
+SINGLE_COMPARE_MAX_LAG_S = 30.0
+SINGLE_COMPARE_LAG_STEP_S = 1.0
+
+# Save the main model/observation panel, the observed/model PSD comparison and
+# a compact CSV of scalar scores under OUTPUT_ROOT/single_comparison.
+SAVE_SINGLE_COMPARISON = True
+
+# Full model-only PSD diagnostic.  Unlike the direct OPC comparison this uses
+# every warm BMM particle (nwat+dwet), including unactivated aerosol and haze.
+# Ice uses nicem+dmaxice.  Fixed logarithmic grids are used only for plotting;
+# they do not alter the model or imply native BMM wet-bin widths.
+SINGLE_MODEL_PSD_NBINS = 180
+SINGLE_MODEL_WARM_PSD_MIN_UM = 0.005
+SINGLE_MODEL_WARM_PSD_MAX_UM = 1000.0
+SINGLE_MODEL_ICE_PSD_MIN_UM = 0.1
+SINGLE_MODEL_ICE_PSD_MAX_UM = 10000.0

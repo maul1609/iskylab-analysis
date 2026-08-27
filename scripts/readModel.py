@@ -9,6 +9,19 @@ R_D = 8.314 / 28.96e-3
 
 # Variables written only when the corresponding BMM process is enabled.
 OPTIONAL_DIAGNOSTICS = [
+    # Bulk/PSD diagnostics introduced for direct model-observation comparison.
+    "dmean_liq",
+    "dvol_liq",
+    "rel_disp_liq",
+    "dwet",
+    "nliq",
+    "nwat",
+    "mwat",
+    "dmaxice",
+    "dmean_ice",
+    "rel_disp_ice",
+    "nicem",
+    "mice",
     "qi",
     "nice",
     "qchamber_bl",

@@ -154,3 +154,69 @@ modelling pre-cloud loss would double represent that loss.
 
 See `requirements.txt`.  The repository does not include the experiment data
 or the BMM executable/build dependencies.
+
+## Single-experiment model/observation comparison
+
+The driver now supports a dedicated development/validation mode, for example:
+
+```bash
+python dataAnalysis_new.py --experiment Exp005
+```
+
+or simply `--experiment 5`.  This generates one named namelist/output under
+`/tmp/$USER/single_comparison/` and writes:
+
+- `comparison-Exp005.png`: pressure and temperature forcing, liquid-water
+  mixing ratio, droplet number, effective diameter, relative dispersion and
+  cumulative chamber/fallout loss diagnostics;
+- `psd-Exp005.png`: observed OPC and BMM wet-particle size distributions on the
+  **same OPC diameter grid and colour scale**;
+- `metrics-Exp005.csv`: cloud-window scores including ql, number, effective
+  diameter and relative dispersion, plus a bounded diagnostic ql lag.
+
+The absolute-time comparison is always retained.  The lag calculation is a
+separate diagnostic only (`SINGLE_COMPARE_MAX_LAG_S`, default +/-30 s) intended
+to expose likely sample-line/instrument delay rather than silently align the
+model and observations.  Positive reported lag means the observation occurs
+later than the model.
+
+OPC spectra are treated as `dN/dlog10D`.  Their actual logarithmic bin widths
+are reconstructed from the diameter centres rather than using the historical
+hard-coded `0.009839` factor.  The same widths are used to calculate OPC
+`Dmean`, volume-mean diameter, `Deff=M3/M2`, relative dispersion and an
+instrument-like droplet number above `SINGLE_COMPARE_DROP_MIN_UM` (2 um by
+default).
+
+The updated BMM writes each native warm-bin number together with its current
+wet diameter.  Those native bins are **not** interpreted as fixed wet-size
+intervals.  At every model output time the analysis conservatively histograms
+`(nwat,dwet)` onto the fixed OPC edges and then divides by `Delta log10D`.
+This is preferable to inventing moving wet-bin widths from BMM array index and
+remains valid if native wet diameters become non-uniform or non-monotonic.
+
+For number concentration, the single-run plot deliberately shows both the BMM
+activation diagnostic and an OPC-like BMM count above the selected wet-diameter
+threshold.  This makes instrument-threshold effects visible instead of folding
+them into an activation comparison.
+
+### Complete model PSD (including unactivated particles)
+
+The direct OPC comparison remains instrument-limited, but the single-run mode
+also writes `model-full-psd-EXP.png`.  Its warm panel uses **all** `nwat` with
+`dwet`, so unactivated aerosol, haze and activated droplets occupy one
+continuous model distribution.  `nliq` is not used for this full PSD; it is
+retained only as an activated-only diagnostic.  A second panel shows the ice
+population from `nicem` with `dmaxice` when ice is present.
+
+The plotting grids are fixed logarithmic diagnostic grids configured by
+`SINGLE_MODEL_*_PSD_*` in `iskylab_config.py`.  They are post-processing grids
+only and do not imply that the native BMM wet diameters have fixed bin widths.
+
+The historical batch interface is retained unchanged:
+
+```bash
+python dataAnalysis_new.py --group 6
+```
+
+`--group` and `--experiment` are mutually exclusive.  If neither is supplied,
+the historical `THIS_RUN` group is used.

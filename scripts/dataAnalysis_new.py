@@ -2,7 +2,8 @@
 
 This is the maintained iSKYLAB batch driver.  It reads the supplied chamber
 measurements and initial aerosol PSDs, creates one BMM namelist per experiment,
-optionally runs ``main.exe``, and compares model/observed cloud-droplet number.
+optionally runs ``main.exe``, and supports both historical batch-number
+comparisons and detailed single-experiment time-series/PSD validation.
 
 Important implementation notes
 ------------------------------
@@ -22,6 +23,9 @@ Important implementation notes
   ``wall_temp_chamber`` for the revised boundary-layer model.
 * Aerosol diameters from the PNSD fitting code are in micrometres internally
   and are converted to metres exactly once when the namelist is written.
+* ``--experiment Exp005`` runs/analyses one experiment against ql, Nd, Deff,
+  relative dispersion and the full OPC size distribution.  Native BMM moving
+  wet diameters are conservatively rebinned onto the observed OPC grid.
 """
 
 from __future__ import annotations
@@ -768,17 +772,488 @@ def analyse_batch(batch_sims, states, data, vals1, vals2, group_type):
     return fig
 
 
-def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=DO_PLOT):
-    if group < 0 or group >= len(meta.BATCH_GROUPS):
-        raise ValueError(f"group must be between 0 and {len(meta.BATCH_GROUPS)-1}")
-    batch_sims = meta.BATCH_GROUPS[group]
-    winit = meta.GROUP_UPDRAFT[group]
+def _time_edges(time):
+    """Return plotting edges for a strictly increasing time-centre coordinate."""
+    time = np.asarray(time, dtype=float)
+    if time.ndim != 1 or len(time) < 2:
+        raise ValueError("time coordinate must contain at least two samples")
+    edges = np.empty(len(time) + 1, dtype=float)
+    edges[1:-1] = 0.5 * (time[:-1] + time[1:])
+    edges[0] = time[0] - 0.5 * (time[1] - time[0])
+    edges[-1] = time[-1] + 0.5 * (time[-1] - time[-2])
+    return edges
 
+
+def _observed_bulk_series(exp, data):
+    """Return OPC bulk variables in units directly comparable with BMM output."""
+    opc = data[f"MergedOPC-{exp}"]
+    met = data[f"MeteoCPC-{exp}"]
+    tobs = np.asarray(opc["Time"], dtype=float)
+    p_hpa = np.interp(tobs, met["Time"], met["Pressure"])
+    t_k = np.interp(tobs, met["Time"], met["Tgw mean"]) + 273.15
+    rho_d = p_hpa * 100.0 / (R_D * t_k)
+    ql = np.asarray(opc["lwc"], dtype=float) * 1.0e-3 / rho_d
+    return {
+        "time": tobs,
+        "rho_d": rho_d,
+        "ql": ql,
+        "ndrop": np.asarray(opc["ndrop"], dtype=float),
+        "ndrop_psd": np.asarray(opc.get("ndrop_psd", opc["ndrop"]), dtype=float),
+        "deff_um": np.asarray(opc["Deff"], dtype=float),
+        "dmean_um": np.asarray(opc.get("Dmean", np.full_like(tobs, np.nan)), dtype=float),
+        "dvol_um": np.asarray(opc.get("Dvol", np.full_like(tobs, np.nan)), dtype=float),
+        "rel_disp": np.asarray(opc.get("rel_disp", np.full_like(tobs, np.nan)), dtype=float),
+        "Dp_um": np.asarray(opc["Dp"], dtype=float),
+        "Dp_edges_um": np.asarray(opc["Dp_edges"], dtype=float),
+        "dlogD": np.asarray(opc["dlogD"], dtype=float),
+        "psd": np.asarray(opc["Conc"], dtype=float),
+    }
+
+
+def _model_bulk_moments_above(model, dmin_um):
+    """Return OPC-like BMM number/size moments above a wet-diameter threshold.
+
+    These moments are calculated from the raw native `(nwat,dwet)` output, not
+    from the model activation flag.  They therefore provide an apples-to-apples
+    comparison with an optical instrument whose sample definition is diameter
+    rather than Koehler activation state.
+    """
+    out = {name: np.full_like(model["time"], np.nan, dtype=float) for name in
+           ("number_cm3", "dmean_um", "dvol_um", "deff_um", "rel_disp")}
+    if "dwet" not in model or "nwat" not in model:
+        return out
+    d = np.asarray(model["dwet"], dtype=float)
+    n = np.asarray(model["nwat"], dtype=float)
+    if d.shape != n.shape:
+        raise ValueError(f"dwet/nwat shape mismatch: {d.shape} vs {n.shape}")
+    axes = tuple(range(1, n.ndim))
+    w = np.where(d > dmin_um * 1.0e-6, n, 0.0)
+    m0 = np.sum(w, axis=axes)
+    m1 = np.sum(w*d, axis=axes)
+    m2 = np.sum(w*d**2, axis=axes)
+    m3 = np.sum(w*d**3, axis=axes)
+    good0 = m0 > 0.0
+    good2 = m2 > 0.0
+    dmean = np.full_like(m0, np.nan, dtype=float)
+    dvol = np.full_like(m0, np.nan, dtype=float)
+    deff = np.full_like(m0, np.nan, dtype=float)
+    rel = np.full_like(m0, np.nan, dtype=float)
+    dmean[good0] = m1[good0] / m0[good0]
+    dvol[good0] = (m3[good0] / m0[good0])**(1.0/3.0)
+    deff[good2] = m3[good2] / m2[good2]
+    variance = np.zeros_like(m0)
+    variance[good0] = np.maximum(m2[good0]/m0[good0] - dmean[good0]**2, 0.0)
+    rel[good0] = np.sqrt(variance[good0]) / np.maximum(dmean[good0], np.finfo(float).tiny)
+    out["number_cm3"] = m0 * np.asarray(model["rhoa"]) / 1.0e6
+    out["dmean_um"] = dmean * 1.0e6
+    out["dvol_um"] = dvol * 1.0e6
+    out["deff_um"] = deff * 1.0e6
+    out["rel_disp"] = rel
+    return out
+
+
+def _model_instrument_number(model, dmin_um):
+    """Backward-compatible shorthand for the instrument-like number series."""
+    return _model_bulk_moments_above(model, dmin_um)["number_cm3"]
+
+
+def _model_psd_on_fixed_grid(model, edges_um, *, diameter_key="dwet", number_key="nwat"):
+    """Conservatively histogram a native moving BMM population onto fixed log-D bins.
+
+    ``number_key`` is a number mixing ratio [kg-1 dry air] carried at the
+    instantaneous diameter in ``diameter_key`` [m].  Native BMM warm/ice bins
+    are *not* interpreted as fixed wet-size intervals; each native point is
+    simply assigned, with its complete number weight, to a diagnostic diameter
+    interval.  The result is dN/dlog10D in cm-3.
+    """
+    if diameter_key not in model or number_key not in model:
+        return None
+    d = np.asarray(model[diameter_key], dtype=float) * 1.0e6
+    n = np.asarray(model[number_key], dtype=float)
+    rho = np.asarray(model["rhoa"], dtype=float)
+    if d.shape != n.shape or d.shape[0] != len(rho):
+        raise ValueError(
+            f"Inconsistent model PSD dimensions for {diameter_key}/{number_key}: "
+            f"{d.shape} vs {n.shape}; nt={len(rho)}"
+        )
+    edges_um = np.asarray(edges_um, dtype=float)
+    if np.any(edges_um <= 0.0) or np.any(np.diff(edges_um) <= 0.0):
+        raise ValueError("PSD diameter edges must be positive and strictly increasing")
+    dlog = np.diff(np.log10(edges_um))
+    out = np.zeros((len(rho), len(dlog)), dtype=float)
+    for it in range(len(rho)):
+        diam = d[it].ravel()
+        weights = n[it].ravel() * rho[it] / 1.0e6  # # cm-3 represented natively
+        good = np.isfinite(diam) & np.isfinite(weights) & (diam > 0.0) & (weights > 0.0)
+        if np.any(good):
+            per_bin, _ = np.histogram(diam[good], bins=edges_um, weights=weights[good])
+            out[it] = per_bin / dlog
+    return out
+
+
+def _model_psd_on_opc_grid(model, edges_um):
+    """Return the *complete warm* BMM PSD on the fixed OPC diameter grid.
+
+    This deliberately uses ``nwat+dwet`` rather than the activated-only
+    ``nliq`` field.  Unactivated aerosol and haze therefore remain in the same
+    model distribution; particles outside the OPC diameter range are simply
+    outside this particular instrument comparison.
+    """
+    return _model_psd_on_fixed_grid(
+        model, edges_um, diameter_key="dwet", number_key="nwat"
+    )
+
+
+def _cloud_comparison_window(exp, obs):
+    """Choose a cloud comparison window, preferring curated metadata when available."""
+    if exp in meta.CLOUD_WINDOWS:
+        return np.asarray(meta.CLOUD_WINDOWS[exp], dtype=float)
+    onset = meta.CLOUD_ONSET.get(exp, float(obs["time"][0]))
+    nd = np.asarray(obs["ndrop"], dtype=float)
+    good = np.isfinite(nd) & (obs["time"] >= onset)
+    if np.any(good):
+        peak = np.nanmax(nd[good])
+        active = good & (nd >= max(1.0, 0.05 * peak))
+        if np.any(active):
+            return np.array([float(obs["time"][active][0]), float(obs["time"][active][-1])])
+    return np.array([onset, float(obs["time"][-1])])
+
+
+def _best_ql_lag(model_time, model_ql, obs_time, obs_ql, window):
+    """Diagnostic lag: positive means the observation occurs later than the model."""
+    maxlag = float(cfg.SINGLE_COMPARE_MAX_LAG_S)
+    step = float(cfg.SINGLE_COMPARE_LAG_STEP_S)
+    if maxlag <= 0.0 or step <= 0.0:
+        return 0.0, np.nan
+    mt = np.asarray(model_time, dtype=float)
+    mq = np.asarray(model_ql, dtype=float)
+    ot = np.asarray(obs_time, dtype=float)
+    oq = np.asarray(obs_ql, dtype=float)
+    base = (mt >= window[0]) & (mt <= window[1]) & np.isfinite(mq)
+    best_lag, best_corr = 0.0, -np.inf
+    for lag in np.arange(-maxlag, maxlag + 0.5 * step, step):
+        # If observations are delayed by +lag, obs(t+lag) corresponds to model(t).
+        target_obs_time = mt[base] + lag
+        inrange = (target_obs_time >= ot[0]) & (target_obs_time <= ot[-1])
+        if np.count_nonzero(inrange) < 5:
+            continue
+        x = mq[base][inrange]
+        y = np.interp(target_obs_time[inrange], ot, oq)
+        good = np.isfinite(x) & np.isfinite(y)
+        if np.count_nonzero(good) < 5 or np.nanstd(x[good]) <= 0.0 or np.nanstd(y[good]) <= 0.0:
+            continue
+        corr = float(np.corrcoef(x[good], y[good])[0, 1])
+        if corr > best_corr:
+            best_lag, best_corr = float(lag), corr
+    return best_lag, best_corr if np.isfinite(best_corr) else np.nan
+
+
+def _series_scores(model_time, model_values, obs_time, obs_values, window, lag=0.0):
+    mt = np.asarray(model_time, dtype=float)
+    mv = np.asarray(model_values, dtype=float)
+    ot = np.asarray(obs_time, dtype=float)
+    ov = np.asarray(obs_values, dtype=float)
+    mask = (mt >= window[0]) & (mt <= window[1]) & np.isfinite(mv)
+    query = mt[mask] + lag
+    valid = (query >= ot[0]) & (query <= ot[-1])
+    if np.count_nonzero(valid) < 2:
+        return {"rmse": np.nan, "nrmse": np.nan, "bias": np.nan}
+    x = mv[mask][valid]
+    y = np.interp(query[valid], ot, ov)
+    good = np.isfinite(x) & np.isfinite(y)
+    if np.count_nonzero(good) < 2:
+        return {"rmse": np.nan, "nrmse": np.nan, "bias": np.nan}
+    err = x[good] - y[good]
+    rmse = float(np.sqrt(np.mean(err**2)))
+    scale = float(np.nanmax(np.abs(y[good])))
+    return {
+        "rmse": rmse,
+        "nrmse": rmse / scale if scale > 0.0 else np.nan,
+        "bias": float(np.mean(err)),
+    }
+
+
+def run_single_experiment(exp, state, data, *, winit=1.3):
+    """Generate and run one named experiment, retaining its namelist and output."""
+    cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    outdir = cfg.OUTPUT_ROOT / "single_comparison"
+    outdir.mkdir(parents=True, exist_ok=True)
+    if not cfg.BMM_EXECUTABLE.exists():
+        raise FileNotFoundError(f"BMM executable not found: {cfg.BMM_EXECUTABLE}")
+    output_file = outdir / f"output-{exp}.nc"
+    namelist_text, _ = make_namelist(exp, state, data, output_file, winit=winit)
+    namelist_file = outdir / f"namelist-{exp}.in"
+    write_text(namelist_file, namelist_text)
+    print(f"Single run: {exp} -> {output_file}")
+    completed = subprocess.run(
+        [str(cfg.BMM_EXECUTABLE), str(namelist_file)],
+        cwd=cfg.BMM_MODEL_FOLDER,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    if completed.stdout.strip():
+        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+    if completed.stderr.strip():
+        print(completed.stderr, end="" if completed.stderr.endswith("\n") else "\n")
+    return output_file
+
+
+def analyse_single_experiment(exp, data, model_file, *, show=True):
+    """Create time-series and PSD model/observation diagnostics for one experiment."""
+    import readModel
+    from matplotlib.colors import LogNorm
+
+    model = readModel.readData(model_file, modelStr=exp)[exp]
+    obs = _observed_bulk_series(exp, data)
+    met = data[f"MeteoCPC-{exp}"]
+    window = _cloud_comparison_window(exp, obs)
+    onset = meta.CLOUD_ONSET.get(exp, window[0])
+
+    nd_model = np.asarray(model["ndrop"]) * np.asarray(model["rhoa"]) / 1.0e6
+    instrument_model = _model_bulk_moments_above(model, cfg.SINGLE_COMPARE_DROP_MIN_UM)
+    nd_model_2um = instrument_model["number_cm3"]
+    deff_model_um = instrument_model["deff_um"]
+    rel_model = instrument_model["rel_disp"]
+    deff_model_activated_um = np.asarray(model["deff"]) * 1.0e6
+    rel_model_activated = np.asarray(model.get("rel_disp_liq", np.full_like(model["time"], np.nan)))
+
+    lag, lag_corr = _best_ql_lag(model["time"], model["ql"], obs["time"], obs["ql"], window)
+    ql_abs = _series_scores(model["time"], model["ql"], obs["time"], obs["ql"], window, lag=0.0)
+    ql_lag = _series_scores(model["time"], model["ql"], obs["time"], obs["ql"], window, lag=lag)
+    nd_score = _series_scores(model["time"], nd_model_2um, obs["time"], obs["ndrop_psd"], window)
+    deff_score = _series_scores(model["time"], deff_model_um, obs["time"], obs["deff_um"], window)
+    rel_score = _series_scores(model["time"], rel_model, obs["time"], obs["rel_disp"], window)
+
+    # Integrated liquid-water exposure is much less sensitive to a short sample-line lag than a peak.
+    mt_mask = (model["time"] >= window[0]) & (model["time"] <= window[1])
+    ot_mask = (obs["time"] >= window[0]) & (obs["time"] <= window[1])
+    int_ql_model = float(np.trapezoid(np.asarray(model["ql"])[mt_mask], np.asarray(model["time"])[mt_mask])) if np.count_nonzero(mt_mask) > 1 else np.nan
+    int_ql_obs = float(np.trapezoid(obs["ql"][ot_mask], obs["time"][ot_mask])) if np.count_nonzero(ot_mask) > 1 else np.nan
+
+    fig, axes = plt.subplots(4, 2, figsize=(14, 16), sharex=False)
+    ax = axes.ravel()
+    # Pressure
+    ax[0].plot(met["Time"] / 60.0, met["Pressure"], label="observed/forced")
+    ax[0].plot(model["time"] / 60.0, np.asarray(model["p"]) / 100.0, "--", label="BMM")
+    ax[0].set_ylabel("Pressure (hPa)"); ax[0].legend(); ax[0].grid()
+    # Temperature
+    ax[1].plot(met["Time"] / 60.0, met["Tgw mean"], label="gas obs/forcing")
+    if "Tww mean" in met:
+        ax[1].plot(met["Time"] / 60.0, met["Tww mean"], label="wall")
+    ax[1].plot(model["time"] / 60.0, np.asarray(model["t"]) - 273.15, "--", label="BMM gas")
+    ax[1].set_ylabel("Temperature (degC)"); ax[1].legend(); ax[1].grid()
+    # Liquid water
+    ax[2].plot(obs["time"] / 60.0, obs["ql"] * 1.0e3, label="OPC")
+    ax[2].plot(model["time"] / 60.0, np.asarray(model["ql"]) * 1.0e3, label="BMM")
+    if abs(lag) > 0.0:
+        ax[2].plot((obs["time"] - lag) / 60.0, obs["ql"] * 1.0e3, ":", label=f"OPC shifted {-lag:+.0f}s")
+    ax[2].set_ylabel(r"$q_l$ (g kg$^{-1}$)"); ax[2].legend(); ax[2].grid()
+    # Number
+    ax[3].plot(obs["time"] / 60.0, obs["ndrop"], label="OPC Nd field")
+    ax[3].plot(obs["time"] / 60.0, obs["ndrop_psd"], ":", label=f"OPC PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
+    ax[3].plot(model["time"] / 60.0, nd_model, label="BMM activated")
+    ax[3].plot(model["time"] / 60.0, nd_model_2um, "--", label=f"BMM >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
+    ax[3].set_ylabel(r"$N_d$ (cm$^{-3}$)"); ax[3].legend(fontsize=8); ax[3].grid()
+    # Effective diameter
+    ax[4].plot(obs["time"] / 60.0, obs["deff_um"], label="OPC")
+    ax[4].plot(model["time"] / 60.0, deff_model_um, label=f"BMM >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
+    ax[4].plot(model["time"] / 60.0, deff_model_activated_um, "--", alpha=0.6, label="BMM activated")
+    ax[4].set_ylabel(r"$D_{eff}$ ($\mu$m)"); ax[4].legend(); ax[4].grid()
+    # Relative dispersion
+    ax[5].plot(obs["time"] / 60.0, obs["rel_disp"], label="OPC PSD")
+    ax[5].plot(model["time"] / 60.0, rel_model, label=f"BMM >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
+    ax[5].plot(model["time"] / 60.0, rel_model_activated, "--", alpha=0.6, label="BMM activated")
+    ax[5].set_ylabel(r"Relative dispersion $\sigma_D/\bar D$"); ax[5].legend(); ax[5].grid()
+    # Cumulative chamber/fallout losses
+    loss_fields = [
+        ("qfan_liq", "fan"), ("qwall_liq", "wall"),
+        ("qfall_liq", "fallout"), ("qchamber_bl", "BL wall water"),
+    ]
+    any_loss = False
+    for name, label in loss_fields:
+        if name in model:
+            ax[6].plot(model["time"] / 60.0, np.asarray(model[name]) * 1.0e3, label=label)
+            any_loss = True
+    ax[6].set_ylabel(r"Cumulative liquid/water loss (g kg$^{-1}$)")
+    if any_loss: ax[6].legend()
+    ax[6].grid()
+    # Summary panel
+    ax[7].axis("off")
+    summary = (
+        f"Cloud comparison: {window[0]/60:.2f}-{window[1]/60:.2f} min\n"
+        f"Diagnostic ql lag: {lag:+.0f} s (corr={lag_corr:.3f})\n"
+        f"ql NRMSE absolute: {ql_abs['nrmse']:.3f}\n"
+        f"ql NRMSE lag-adjusted: {ql_lag['nrmse']:.3f}\n"
+        f"Nd(>{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um) NRMSE: {nd_score['nrmse']:.3f}\n"
+        f"Deff NRMSE: {deff_score['nrmse']:.3f}\n"
+        f"Rel. dispersion NRMSE: {rel_score['nrmse']:.3f}\n"
+        f"Integral ql model/obs: {int_ql_model:.4g} / {int_ql_obs:.4g} kg s kg-1"
+    )
+    ax[7].text(0.02, 0.98, summary, va="top", family="monospace")
+
+    for a in ax[:7]:
+        a.axvline(onset / 60.0, color="0.5", linestyle=":", linewidth=1)
+        a.axvspan(window[0] / 60.0, window[1] / 60.0, color="0.9", alpha=0.25)
+        a.set_xlabel("Time (min)")
+    fig.suptitle(f"{exp}: BMM vs iSKYLAB observations")
+    fig.tight_layout()
+
+    # Observed/model PSD on exactly the same OPC diameter bins and colour scale.
+    model_psd = _model_psd_on_opc_grid(model, obs["Dp_edges_um"])
+    psd_fig = None
+    if model_psd is not None:
+        psd_fig, pax = plt.subplots(2, 1, figsize=(13, 9), sharex=False, sharey=True)
+        positive = np.concatenate([
+            obs["psd"][np.isfinite(obs["psd"]) & (obs["psd"] > 0.0)],
+            model_psd[np.isfinite(model_psd) & (model_psd > 0.0)],
+        ])
+        if positive.size:
+            vmin = max(float(np.nanpercentile(positive, 2.0)), 1.0e-4)
+            vmax = max(float(np.nanpercentile(positive, 99.5)), 10.0 * vmin)
+        else:
+            vmin, vmax = 1.0e-4, 1.0
+        norm = LogNorm(vmin=vmin, vmax=vmax)
+        pcm0 = pax[0].pcolormesh(
+            _time_edges(obs["time"]) / 60.0, obs["Dp_edges_um"], obs["psd"].T,
+            shading="auto", norm=norm,
+        )
+        pax[0].set_title("Observed OPC dN/dlog10D")
+        pcm1 = pax[1].pcolormesh(
+            _time_edges(model["time"]) / 60.0, obs["Dp_edges_um"], model_psd.T,
+            shading="auto", norm=norm,
+        )
+        pax[1].set_title("BMM rebinned to OPC diameter grid")
+        for a in pax:
+            a.set_yscale("log")
+            a.set_ylabel(r"Wet diameter ($\mu$m)")
+            a.axvline(onset / 60.0, color="w", linestyle=":", linewidth=1)
+        pax[1].set_xlabel("Time (min)")
+        psd_fig.colorbar(pcm1, ax=pax, label=r"dN/dlog$_{10}$D (cm$^{-3}$)")
+        psd_fig.suptitle(f"{exp}: observed and model liquid/warm-particle size distributions")
+
+    # Model-only full PSD diagnostic.  The warm panel includes every nwat
+    # particle (unactivated aerosol + haze + activated liquid) rather than the
+    # activated-only nliq subset.  Ice is shown independently when available.
+    n_psd = int(cfg.SINGLE_MODEL_PSD_NBINS)
+    if n_psd < 10:
+        raise ValueError("SINGLE_MODEL_PSD_NBINS must be >= 10")
+    warm_edges = np.logspace(
+        np.log10(cfg.SINGLE_MODEL_WARM_PSD_MIN_UM),
+        np.log10(cfg.SINGLE_MODEL_WARM_PSD_MAX_UM),
+        n_psd + 1,
+    )
+    warm_psd = _model_psd_on_fixed_grid(
+        model, warm_edges, diameter_key="dwet", number_key="nwat"
+    )
+    ice_edges = np.logspace(
+        np.log10(cfg.SINGLE_MODEL_ICE_PSD_MIN_UM),
+        np.log10(cfg.SINGLE_MODEL_ICE_PSD_MAX_UM),
+        n_psd + 1,
+    )
+    ice_psd = _model_psd_on_fixed_grid(
+        model, ice_edges, diameter_key="dmaxice", number_key="nicem"
+    )
+    full_psd_fig = None
+    if warm_psd is not None:
+        have_ice = ice_psd is not None and np.any(np.isfinite(ice_psd) & (ice_psd > 0.0))
+        nrows = 2 if have_ice else 1
+        full_psd_fig, faxes = plt.subplots(nrows, 1, figsize=(13, 5.0 * nrows), squeeze=False)
+        faxes = faxes.ravel()
+
+        def _psd_norm(arr):
+            pos = arr[np.isfinite(arr) & (arr > 0.0)]
+            if pos.size == 0:
+                return LogNorm(vmin=1.0e-4, vmax=1.0)
+            vmin = max(float(np.nanpercentile(pos, 1.0)), 1.0e-6)
+            vmax = max(float(np.nanpercentile(pos, 99.5)), 10.0 * vmin)
+            return LogNorm(vmin=vmin, vmax=vmax)
+
+        wpcm = faxes[0].pcolormesh(
+            _time_edges(model["time"]) / 60.0,
+            warm_edges,
+            warm_psd.T,
+            shading="auto",
+            norm=_psd_norm(warm_psd),
+        )
+        faxes[0].set_title("BMM complete warm PSD: aerosol + haze + activated liquid")
+        faxes[0].set_yscale("log")
+        faxes[0].set_ylabel(r"Wet diameter ($\mu$m)")
+        faxes[0].axvline(onset / 60.0, color="w", linestyle=":", linewidth=1)
+        full_psd_fig.colorbar(wpcm, ax=faxes[0], label=r"dN/dlog$_{10}$D (cm$^{-3}$)")
+
+        if have_ice:
+            ipcm = faxes[1].pcolormesh(
+                _time_edges(model["time"]) / 60.0,
+                ice_edges,
+                ice_psd.T,
+                shading="auto",
+                norm=_psd_norm(ice_psd),
+            )
+            faxes[1].set_title(r"BMM ice PSD ($D_{max}$)")
+            faxes[1].set_yscale("log")
+            faxes[1].set_ylabel(r"$D_{max}$ ($\mu$m)")
+            faxes[1].axvline(onset / 60.0, color="w", linestyle=":", linewidth=1)
+            full_psd_fig.colorbar(ipcm, ax=faxes[1], label=r"dN/dlog$_{10}$D (cm$^{-3}$)")
+
+        faxes[-1].set_xlabel("Time (min)")
+        full_psd_fig.suptitle(f"{exp}: complete BMM particle size distributions")
+        full_psd_fig.tight_layout()
+
+    metrics = {
+        "experiment": exp,
+        "window_start_s": window[0], "window_end_s": window[1],
+        "best_ql_lag_s": lag, "best_ql_lag_corr": lag_corr,
+        "ql_nrmse_absolute": ql_abs["nrmse"], "ql_nrmse_lagged": ql_lag["nrmse"],
+        "ndrop_psd_nrmse": nd_score["nrmse"], "deff_nrmse": deff_score["nrmse"],
+        "rel_disp_nrmse": rel_score["nrmse"],
+        "integrated_ql_model_kg_s_kg": int_ql_model,
+        "integrated_ql_obs_kg_s_kg": int_ql_obs,
+    }
+    if cfg.SAVE_SINGLE_COMPARISON:
+        outdir = cfg.OUTPUT_ROOT / "single_comparison"
+        outdir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(outdir / f"comparison-{exp}.png", dpi=180)
+        if psd_fig is not None:
+            psd_fig.savefig(outdir / f"psd-{exp}.png", dpi=180)
+        if full_psd_fig is not None:
+            full_psd_fig.savefig(outdir / f"model-full-psd-{exp}.png", dpi=180)
+        with (outdir / f"metrics-{exp}.csv").open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["metric", "value"])
+            writer.writerows(metrics.items())
+        print(f"Single-experiment diagnostics written to {outdir}")
+    if show:
+        plt.show()
+    return fig, psd_fig, full_psd_fig, metrics
+
+def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=DO_PLOT,
+         experiment=None, winit_single=1.3):
     if not READ_DATA:
         raise RuntimeError("READ_DATA=False is no longer supported without supplying a cached data dictionary")
     data = load_all_data()
     _write_forcing_smoothing_diagnostics(data)
     states = build_initial_state(data)
+
+    if experiment is not None:
+        exp = str(experiment)
+        if not exp.startswith("Exp"):
+            exp = f"Exp{int(exp):03d}"
+        if exp not in states:
+            raise KeyError(f"No initial-state metadata/data available for {exp}")
+        model_file = cfg.OUTPUT_ROOT / "single_comparison" / f"output-{exp}.nc"
+        if run_model:
+            model_file = run_single_experiment(exp, states[exp], data, winit=winit_single)
+        elif not model_file.exists():
+            raise FileNotFoundError(f"Existing single-run output not found: {model_file}")
+        if do_analysis:
+            return analyse_single_experiment(exp, data, model_file, show=do_plot)
+        return model_file
+
+    if group < 0 or group >= len(meta.BATCH_GROUPS):
+        raise ValueError(f"group must be between 0 and {len(meta.BATCH_GROUPS)-1}")
+    batch_sims = meta.BATCH_GROUPS[group]
+    winit = meta.GROUP_UPDRAFT[group]
 
     vals1 = vals2 = None
     if run_model:
@@ -786,8 +1261,6 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
 
     if do_analysis:
         if vals1 is None or vals2 is None:
-            # Reconstruct the initial aerosol totals from the same configuration
-            # when analysing existing output files without rerunning the model.
             vals1 = np.zeros(len(batch_sims))
             vals2 = np.zeros(len(batch_sims))
             for i, exp in enumerate(batch_sims):
@@ -802,13 +1275,19 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--group", type=int, default=THIS_RUN, help="index in experiment_metadata.BATCH_GROUPS")
-    parser.add_argument("--no-run", action="store_true", help="analyse existing /tmp outputs without running BMM")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--group", type=int, default=None, help="index in experiment_metadata.BATCH_GROUPS")
+    target.add_argument("--experiment", help="single experiment, e.g. Exp005 or 5")
+    parser.add_argument("--winit", type=float, default=1.3, help="initial/updraft value used for a single run")
+    parser.add_argument("--no-run", action="store_true", help="analyse existing output without running BMM")
     parser.add_argument("--no-analysis", action="store_true", help="generate/run namelists only")
-    parser.add_argument("--no-plot", action="store_true", help="do not display the summary plot")
+    parser.add_argument("--no-plot", action="store_true", help="do not display plots (saved diagnostics still written)")
     args = parser.parse_args()
+    selected_group = THIS_RUN if args.group is None else args.group
     main(
-        group=args.group,
+        group=selected_group,
+        experiment=args.experiment,
+        winit_single=args.winit,
         run_model=not args.no_run,
         do_analysis=not args.no_analysis,
         do_plot=not args.no_plot,

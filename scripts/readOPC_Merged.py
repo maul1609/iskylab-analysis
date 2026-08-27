@@ -79,22 +79,51 @@ def readData(readThis = 3,opcStr="MergedOPC-Exp005"):
 		i=i+1
 	csvfile.close()
 	conc=np.array(conc)
-	# Effective diameter D_eff=M3/M2.  Empty/invalid spectra are NaN rather
-	# than generating an unhandled divide-by-zero warning.
+	# The merged spectra are dN/dlog10D.  Reconstruct logarithmic bin widths
+	# from the diameter centres before calculating number-weighted moments.
+	# This avoids the historical hard-coded 0.009839 factor and remains valid if
+	# a later OPC processing version changes the diameter grid.
 	dp_arr=np.asarray(Dp,dtype=float)
-	m2=np.sum(conc*dp_arr**2,axis=1)
-	m3=np.sum(conc*dp_arr**3,axis=1)
-	Deff=np.full_like(m2,np.nan,dtype=float)
-	good=m2>0.0
-	Deff[good]=m3[good]/m2[good]
+	logc=np.log10(dp_arr)
+	loge=np.empty(len(dp_arr)+1,dtype=float)
+	loge[1:-1]=0.5*(logc[:-1]+logc[1:])
+	loge[0]=logc[0]-0.5*(logc[1]-logc[0])
+	loge[-1]=logc[-1]+0.5*(logc[-1]-logc[-2])
+	dlog=np.diff(loge)
+	dp_edges=10.0**loge
+	nbin=conc*dlog[None,:]  # number concentration represented by each OPC bin
+
+	# Cloud-drop bulk moments use the same 2-um lower threshold as the standard
+	# iSKYLAB number comparison.  The complete spectrum is still retained.
+	drop_mask=dp_arr>2.0
+	w=np.where(drop_mask[None,:],nbin,0.0)
+	m0=np.nansum(w,axis=1)
+	m1=np.nansum(w*dp_arr[None,:],axis=1)
+	m2=np.nansum(w*dp_arr[None,:]**2,axis=1)
+	m3=np.nansum(w*dp_arr[None,:]**3,axis=1)
+	Dmean=np.full_like(m0,np.nan,dtype=float)
+	Dvol=np.full_like(m0,np.nan,dtype=float)
+	Deff=np.full_like(m0,np.nan,dtype=float)
+	rel_disp=np.full_like(m0,np.nan,dtype=float)
+	good0=m0>0.0
+	Dmean[good0]=m1[good0]/m0[good0]
+	Dvol[good0]=(m3[good0]/m0[good0])**(1.0/3.0)
+	good2=m2>0.0
+	Deff[good2]=m3[good2]/m2[good2]
+	variance=np.zeros_like(m0,dtype=float)
+	variance[good0]=np.maximum(m2[good0]/m0[good0]-Dmean[good0]**2,0.0)
+	good_disp=good0 & (Dmean>0.0)
+	rel_disp[good_disp]=np.sqrt(variance[good_disp])/Dmean[good_disp]
+	ndrop_psd=np.nansum(w,axis=1)
 
 	data1=dict()
 	data1 = {opcStr : \
 		{"Time" : np.array(time), "Conc" : np.array(conc), \
 		"ntot" : np.array(ntot), "ndrop": np.array(ndrop), \
 		"nice" : np.array(nice), "lwc" : np.array(lwc), \
-		'Deff': Deff, \
-		'Dp': np.array(Dp)}}
+		'Deff': Deff, 'Dmean': Dmean, 'Dvol': Dvol, 'rel_disp': rel_disp, \
+		'ndrop_psd': ndrop_psd, 'Dp': np.array(Dp), 'Dp_edges': dp_edges, \
+		'dlogD': dlog}}
 	return data1
 
 if __name__== "__main__":
