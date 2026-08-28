@@ -26,6 +26,8 @@ OPTIONAL_DIAGNOSTICS = [
     "nice",
     "qchamber_bl",
     "qchamber_bl_step",
+    "qchamber_bl_evap",
+    "qchamber_bl_evap_step",
     "qfan_liq",
     "nfan_liq",
     "qfan_ice",

@@ -92,41 +92,57 @@ INITIAL_RH_METHOD = "cloud_onset"
 # absolute overrides take precedence.  Values are seconds from the experiment
 # time origin, e.g. {"Exp005": 6.6*60.0}.
 MODEL_SATURATION_TIME_SHIFT_S = 0.0
-MODEL_SATURATION_TIME_OVERRIDES_S = {'Exp006': 9. * 60.0}
+MODEL_SATURATION_TIME_OVERRIDES_S = {'Exp006': 12. * 60.0,'Exp025': 9.75 * 60.0}
 
 # Aerosol number normalisation:
 #   "t0"          : CPC concentration at t=0.  Recommended when modelling
 #                   pre-cloud particle loss (fan, walls or fallout).
 #   "cloud_onset" : historical choice; constrains aerosol immediately before
 #                   activation and therefore hides any pre-cloud loss.
-AEROSOL_INIT_TIME = "t0"
+AEROSOL_INIT_TIME = "cloud_onset"
 
 # ---------------------------------------------------------------------------
 # Chamber boundary-layer treatment
 # ---------------------------------------------------------------------------
-# Boundary-layer mixing closure:
+# Coupled chamber BL operator:
 #   0 = off
-#   1 = homogeneous bulk adjustment
-#   2 = uniform extreme inhomogeneous: the same fraction of every activated
-#       size bin disappears completely
-#   3 = D2-law-weighted extreme inhomogeneous: complete-evaporation fractions
-#       are biased toward smaller droplets as m_w^(-2/3), capped at 1; the
-#       coefficient is solved internally from the thermodynamic RH deficit.
-CHAMBER_BL_MIX = 3
-CHAMBER_BL_TAU = 43.0  # s
+#   1 = on
+#
+# When enabled, the BL thermodynamics first diagnoses the effective sensible
+# temperature
+#
+#   T_sens = T_gas + CHAMBER_BL_ALPHA_T*(T_wall-T_gas)
+#                    + CHAMBER_BL_TEMP_OFFSET
+#
+# before solving any latent phase change.  The measured wall temperature is
+# therefore a boundary condition rather than being assumed to equal the BL-air
+# temperature.  Useful limits are:
+#   ALPHA_T=0, OFFSET=0 : T_sens follows the measured gas temperature
+#   ALPHA_T=1, OFFSET=0 : T_sens follows the measured wall temperature
+#   ALPHA_T=0, OFFSET=-0.12 : historical fixed -0.12 K BL sensitivity
+CHAMBER_BL_MIX = 1
+CHAMBER_BL_TAU = 4.0  # s, chamber-scale BL processing/recirculation timescale
+CHAMBER_BL_ALPHA_T = 0.33
+CHAMBER_BL_TEMP_OFFSET = 0.0  # K, optional unresolved BL sensible-temperature offset
 
-# 0: T_BL = T_gas + CHAMBER_BL_TEMP_OFFSET
-# 1: use measured wall temperature (Tww_mean) written as wall_temp_chamber(t)
-CHAMBER_BL_TEMP_MODE = 0
-CHAMBER_BL_TEMP_OFFSET = -0.12  # K, used only in mode 0
+# How thermodynamically required LIQUID evaporation is represented in the PSD:
+#   1 = homogeneous diffusional evaporation.  Every activated droplet receives
+#       the same finite D^2 decrement; small droplets may naturally evaporate
+#       completely while larger droplets shrink.
+#   2 = uniform extreme inhomogeneous.  The same fraction of every activated
+#       bin evaporates completely; survivors retain their original size.
+#   3 = D2-lifetime-weighted extreme inhomogeneous.  Complete-evaporation
+#       fractions are biased toward smaller droplets as m_w^(-2/3), capped by
+#       the BL-processed fraction; survivors retain their original size.
+CHAMBER_BL_EVAP_MODE = 3
 
 # ---------------------------------------------------------------------------
 # Drone-fan blade collection
 # ---------------------------------------------------------------------------
 # 0=off, 1=saturating sigmoid in current particle diameter.
-CHAMBER_FAN_LOSS = 1
-CHAMBER_FAN_LOSS_KMAX = 1.9e-3 #1.5e-3      # s-1
-CHAMBER_FAN_LOSS_D50_REF = 20e-6 #10.0e-6   # m at reference RPM
+CHAMBER_FAN_LOSS = 0
+CHAMBER_FAN_LOSS_KMAX = 1.5e-3 #1.5e-3      # s-1
+CHAMBER_FAN_LOSS_D50_REF = 4e-6 #10.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
 CHAMBER_FAN_RPM_REF = 25000.0
@@ -139,8 +155,8 @@ CHAMBER_FAN_RPM_REF = 25000.0
 # independently by the generic BMM fallout scheme.
 CHAMBER_WALL_LOSS = 1
 CHAMBER_WALL_USTAR = 0.02 #0.02  # m s-1
-CHAMBER_DIAMETER = 2.0     # m
-CHAMBER_HEIGHT = 2.5       # m
+CHAMBER_DIAMETER = 1.5    # m
+CHAMBER_HEIGHT = 2.15       # m
 
 # ---------------------------------------------------------------------------
 # Generic BMM fallout/sedimentation

@@ -19,8 +19,9 @@ Important implementation notes
   with time-based Savitzky-Golay windows before namelist export.  The raw
   observations are retained and diagnostic plots/summary statistics can be
   written for every experiment.
-* The measured ``Tww_mean`` series can optionally be written as
-  ``wall_temp_chamber`` for the revised boundary-layer model.
+* The measured ``Tww_mean`` series is written automatically when the coupled
+  coupled wall-BL treatment is enabled with non-zero thermal coupling, or when
+  wall-temperature BL mode explicitly requires it.
 * Aerosol diameters from the PNSD fitting code are in micrometres internally
   and are converted to metres exactly once when the namelist is written.
 * ``--experiment Exp005`` runs/analyses one experiment against ql, Nd, Deff,
@@ -601,10 +602,10 @@ def chamber_spec_body(met):
                 _format_fortran_array("qtot_chamber", met["qtot_forcing"], n),
             ]
         )
-    if cfg.CHAMBER_BL_TEMP_MODE == 1:
+    if cfg.CHAMBER_BL_MIX and cfg.CHAMBER_BL_ALPHA_T > 0.0:
         blocks.extend(
             [
-                "    ! Measured wall temperature (Tww_mean) for BL temp mode 1.",
+                "    ! Measured wall temperature (Tww_mean) for wall-coupled BL processing.",
                 _format_fortran_array("wall_temp_chamber", met["Tww mean"] + 273.15, n),
             ]
         )
@@ -731,8 +732,10 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
 
     if force_q and not cfg.WRITE_QTOT_DATA:
         raise ValueError("FORCE_QTOT=True requires WRITE_QTOT_DATA=True")
-    if cfg.CHAMBER_BL_TEMP_MODE == 1 and bl_mix and "Tww mean" not in met:
-        raise ValueError("BL temp mode 1 requires measured Tww_mean")
+    if bl_mix not in (0, 1):
+        raise ValueError("CHAMBER_BL_MIX must be 0 (off) or 1 (on)")
+    if bl_mix and cfg.CHAMBER_BL_ALPHA_T > 0.0 and "Tww mean" not in met:
+        raise ValueError("CHAMBER_BL_ALPHA_T > 0 requires measured Tww_mean")
 
     chamber_values = {
         "n_levels_c": n,
@@ -741,7 +744,8 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
         "chamber_force_qtot": force_q,
         "chamber_bl_mix": bl_mix,
         "chamber_bl_tau": cfg.CHAMBER_BL_TAU,
-        "chamber_bl_temp_mode": cfg.CHAMBER_BL_TEMP_MODE,
+        "chamber_bl_alpha_t": cfg.CHAMBER_BL_ALPHA_T,
+        "chamber_bl_evap_mode": cfg.CHAMBER_BL_EVAP_MODE,
         "chamber_bl_temp_offset": cfg.CHAMBER_BL_TEMP_OFFSET,
         "chamber_fan_loss": fan_loss,
         "chamber_fan_loss_kmax": cfg.CHAMBER_FAN_LOSS_KMAX,
@@ -1585,14 +1589,15 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
     # Cumulative chamber/fallout losses
     loss_fields = [
         ("qfan_liq", "fan"), ("qwall_liq", "wall"),
-        ("qfall_liq", "fallout"), ("qchamber_bl", "BL wall water"),
+        ("qfall_liq", "fallout"), ("qchamber_bl", "BL wall water loss"),
+        ("qchamber_bl_evap", "BL liquid->vapour"),
     ]
     any_loss = False
     for name, label in loss_fields:
         if name in model:
             ax[6].plot(model["time"] / 60.0, np.asarray(model[name]) * 1.0e3, label=label)
             any_loss = True
-    ax[6].set_ylabel(r"Cumulative liquid/water loss (g kg$^{-1}$)")
+    ax[6].set_ylabel(r"Cumulative BL / particle-water diagnostic (g kg$^{-1}$)")
     if any_loss: ax[6].legend()
     ax[6].grid()
     # Summary panel
