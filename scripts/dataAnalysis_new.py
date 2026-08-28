@@ -43,7 +43,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import savgol_filter
+from scipy.signal import butter, savgol_filter, sosfiltfilt
 
 import experiment_metadata as meta
 import iskylab_config as cfg
@@ -61,70 +61,106 @@ R_V = R_GAS / M_WATER
 EPSILON = R_D / R_V
 
 
-def _savgol_time_series(time, values, window_seconds, polyorder, *, name="series"):
-    """Return a Savitzky-Golay-smoothed series using a time-based window.
 
-    The chamber records are nominally close to uniform in time, but this helper
-    does not assume that every experiment has the same sample interval.  It
-    infers the median positive ``dt`` and converts ``window_seconds`` to an odd
-    sample count.  If the timestamps are noticeably irregular, the observations
-    are first interpolated onto a uniform median-dt grid, filtered there, and
-    then interpolated back to the original timestamps.
+def _smoothing_cfg(name, default):
+    """Return a smoothing config value without requiring an updated config file."""
+    return getattr(cfg, name, default)
 
-    End points use SciPy's ``mode="interp"`` so they are not padded with an
-    artificial constant/zero value.  Windows that are too short for the chosen
-    polynomial order are rejected rather than silently applying a different
-    filter.
-    """
+
+def _time_sampling_info(time, *, name="series"):
+    """Validate a time coordinate and return its representative sampling interval."""
     time = np.asarray(time, dtype=float)
-    values = np.asarray(values, dtype=float)
-    if time.ndim != 1 or values.ndim != 1 or len(time) != len(values):
-        raise ValueError(f"{name}: time and values must be one-dimensional and equal length")
-    if len(time) < polyorder + 3:
-        raise ValueError(f"{name}: too few samples for Savitzky-Golay smoothing")
-    if window_seconds <= 0.0:
-        raise ValueError(f"{name}: smoothing window must be positive")
-    if polyorder < 0:
-        raise ValueError(f"{name}: polynomial order must be non-negative")
-
+    if time.ndim != 1 or time.size < 3:
+        raise ValueError(f"{name}: time coordinate must contain at least three samples")
     if not np.all(np.isfinite(time)):
         raise ValueError(f"{name}: time coordinate contains non-finite values")
     dt_all = np.diff(time)
     if np.any(dt_all <= 0.0):
         raise ValueError(f"{name}: time coordinate must be strictly increasing")
-    dt_good = dt_all[np.isfinite(dt_all)]
-    if dt_good.size == 0:
-        raise ValueError(f"{name}: no valid time increments")
-    dt = float(np.median(dt_good))
+    dt = float(np.median(dt_all))
+    rel_irregularity = float(np.max(np.abs(dt_all - dt)) / dt)
+    return dt, rel_irregularity
 
-    # Round the requested physical window to the closest sensible odd number
-    # of samples.  Require at least polyorder+2 points and then make it odd.
-    nwin = int(round(window_seconds / dt))
-    nwin = max(nwin, polyorder + 2)
+
+def _window_samples(time, window_seconds, *, minimum=3, name="series"):
+    """Convert a physical smoothing/despiking window to a sensible odd sample count."""
+    dt, _ = _time_sampling_info(time, name=name)
+    if window_seconds <= 0.0:
+        raise ValueError(f"{name}: smoothing window must be positive")
+    nwin = max(int(round(float(window_seconds) / dt)), int(minimum))
     if nwin % 2 == 0:
         nwin += 1
-    if nwin > len(time):
-        nwin = len(time) if len(time) % 2 == 1 else len(time) - 1
+    nmax = len(time) if len(time) % 2 == 1 else len(time) - 1
+    nwin = min(nwin, nmax)
+    if nwin < minimum:
+        raise ValueError(f"{name}: record is too short for requested filtering")
+    return int(nwin), dt
+
+
+def _hampel_time_series(time, values, window_seconds, nsigma, *, name="series"):
+    """Robustly replace isolated spikes using a local median/MAD criterion.
+
+    This is deliberately a despiker, not a smoother.  Genuine slower chamber
+    structure is retained; only points that are strong local outliers are
+    replaced by the local median.
+    """
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if values.ndim != 1 or values.size != time.size:
+        raise ValueError(f"{name}: time and values must be one-dimensional and equal length")
+
+    nwin, dt = _window_samples(time, window_seconds, minimum=3, name=name)
+    half = nwin // 2
+    padded = np.pad(values, (half, half), mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, nwin)
+    med = np.median(windows, axis=1)
+    mad = np.median(np.abs(windows - med[:, None]), axis=1)
+
+    # 1.4826*MAD estimates sigma for Gaussian noise.  The small numerical floor
+    # still allows an isolated spike in an otherwise flat segment to be caught.
+    scale_floor = 50.0 * np.finfo(float).eps * np.maximum(1.0, np.abs(med))
+    sigma = np.maximum(1.4826 * mad, scale_floor)
+    flagged = np.abs(values - med) > float(nsigma) * sigma
+
+    out = values.copy()
+    out[flagged] = med[flagged]
+    return out, {
+        "despike_window_seconds": float(window_seconds),
+        "despike_window_samples": int(nwin),
+        "despike_nsigma": float(nsigma),
+        "n_despiked": int(np.count_nonzero(flagged)),
+        "median_dt_s": float(dt),
+    }
+
+
+def _savgol_time_series(time, values, window_seconds, polyorder, *, name="series"):
+    """Return zero-lag Savitzky-Golay-smoothed data using a physical-time window."""
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if values.ndim != 1 or len(time) != len(values):
+        raise ValueError(f"{name}: time and values must be one-dimensional and equal length")
+    if polyorder < 0:
+        raise ValueError(f"{name}: polynomial order must be non-negative")
+
+    dt, rel_irregularity = _time_sampling_info(time, name=name)
+    nwin, _ = _window_samples(
+        time, window_seconds, minimum=max(polyorder + 2, 3), name=name
+    )
     if nwin <= polyorder:
         raise ValueError(
             f"{name}: effective window ({nwin} samples) must exceed polyorder={polyorder}"
         )
 
-    # Determine whether direct filtering is justified.  A 5% relative spread
-    # in dt is small enough that treating the samples as uniform is harmless;
-    # otherwise filter on an explicitly uniform grid.
-    rel_irregularity = float(np.max(np.abs(dt_good - dt)) / dt)
     if rel_irregularity <= 0.05:
         smoothed = savgol_filter(values, nwin, polyorder, mode="interp")
     else:
         uniform_time = np.arange(time[0], time[-1] + 0.5 * dt, dt)
         uniform_values = np.interp(uniform_time, time, values)
-        nwin_uniform = int(round(window_seconds / dt))
-        nwin_uniform = max(nwin_uniform, polyorder + 2)
+        nwin_uniform = max(int(round(window_seconds / dt)), polyorder + 2)
         if nwin_uniform % 2 == 0:
             nwin_uniform += 1
-        if nwin_uniform > len(uniform_time):
-            nwin_uniform = len(uniform_time) if len(uniform_time) % 2 == 1 else len(uniform_time) - 1
+        nmax = len(uniform_time) if len(uniform_time) % 2 == 1 else len(uniform_time) - 1
+        nwin_uniform = min(nwin_uniform, nmax)
         if nwin_uniform <= polyorder:
             raise ValueError(f"{name}: effective uniform-grid window is too short")
         uniform_smooth = savgol_filter(
@@ -133,70 +169,273 @@ def _savgol_time_series(time, values, window_seconds, polyorder, *, name="series
         smoothed = np.interp(time, uniform_time, uniform_smooth)
 
     return np.asarray(smoothed, dtype=float), {
+        "method": "savgol",
         "median_dt_s": dt,
         "window_samples": int(nwin),
-        "window_seconds_effective": float(nwin * dt),
+        "timescale_seconds": float(window_seconds),
+        "max_dt_irregularity_fraction": rel_irregularity,
+        "polyorder": int(polyorder),
+    }
+
+
+def _butterworth_time_series(time, values, timescale_seconds, order=2, *, name="series"):
+    """Return zero-phase Butterworth low-pass-smoothed data.
+
+    ``timescale_seconds`` is interpreted as the cutoff period: variability with
+    periods much shorter than this is increasingly attenuated.  Filtering is
+    performed on a uniform median-dt grid and with ``sosfiltfilt`` so no phase
+    lag is introduced into chamber cooling/warming features.
+    """
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if values.ndim != 1 or len(time) != len(values):
+        raise ValueError(f"{name}: time and values must be one-dimensional and equal length")
+    if timescale_seconds <= 0.0:
+        raise ValueError(f"{name}: Butterworth cutoff period must be positive")
+    if order < 1:
+        raise ValueError(f"{name}: Butterworth order must be >= 1")
+
+    dt, rel_irregularity = _time_sampling_info(time, name=name)
+    uniform_time = np.arange(time[0], time[-1] + 0.5 * dt, dt)
+    uniform_values = np.interp(uniform_time, time, values)
+
+    fs = 1.0 / dt
+    nyquist = 0.5 * fs
+    requested_cutoff_hz = 1.0 / float(timescale_seconds)
+    cutoff_hz = min(requested_cutoff_hz, 0.90 * nyquist)
+
+    sos = butter(int(order), cutoff_hz, btype="lowpass", fs=fs, output="sos")
+    uniform_smooth = sosfiltfilt(sos, uniform_values)
+    smoothed = np.interp(time, uniform_time, uniform_smooth)
+
+    return np.asarray(smoothed, dtype=float), {
+        "method": "butterworth",
+        "median_dt_s": dt,
+        "timescale_seconds": float(timescale_seconds),
+        "cutoff_hz": float(cutoff_hz),
+        "requested_cutoff_hz": float(requested_cutoff_hz),
+        "order": int(order),
         "max_dt_irregularity_fraction": rel_irregularity,
     }
 
 
+def _smoothing_candidates(time, values, timescale_seconds, *, name):
+    """Return raw/despiked/Savitzky-Golay/Butterworth candidates for one series."""
+    time = np.asarray(time, dtype=float)
+    filled = np.asarray(values, dtype=float)
+
+    do_despike = bool(_smoothing_cfg("CHAMBER_DESPIKE", True))
+    despike_window = float(_smoothing_cfg("CHAMBER_DESPIKE_WINDOW", 10.0))
+    despike_nsigma = float(_smoothing_cfg("CHAMBER_DESPIKE_NSIGMA", 4.0))
+    polyorder = int(_smoothing_cfg("CHAMBER_SMOOTH_POLYORDER", 2))
+    butter_order = int(_smoothing_cfg("CHAMBER_BUTTERWORTH_ORDER", 2))
+
+    if do_despike:
+        despiked, despike_info = _hampel_time_series(
+            time, filled, despike_window, despike_nsigma, name=name
+        )
+    else:
+        despiked = filled.copy()
+        dt, _ = _time_sampling_info(time, name=name)
+        despike_info = {
+            "despike_window_seconds": 0.0,
+            "despike_window_samples": 1,
+            "despike_nsigma": despike_nsigma,
+            "n_despiked": 0,
+            "median_dt_s": dt,
+        }
+
+    savgol, savgol_info = _savgol_time_series(
+        time, despiked, timescale_seconds, polyorder, name=name
+    )
+    butterworth, butter_info = _butterworth_time_series(
+        time, despiked, timescale_seconds, butter_order, name=name
+    )
+
+    return {
+        "raw": filled,
+        "despiked": despiked,
+        "savgol": savgol,
+        "butterworth": butterworth,
+        "info": {
+            "despike": despike_info,
+            "savgol": savgol_info,
+            "butterworth": butter_info,
+        },
+    }
+
+
+def _selected_smoothing_method():
+    """Resolve the forcing method while retaining backward compatibility."""
+    if not bool(_smoothing_cfg("SMOOTH_CHAMBER_FORCING", True)):
+        return "raw"
+    method = str(_smoothing_cfg("CHAMBER_SMOOTH_METHOD", "butterworth")).strip().lower()
+    aliases = {
+        "none": "raw",
+        "off": "raw",
+        "sgolay": "savgol",
+        "savitzky-golay": "savgol",
+        "butter": "butterworth",
+    }
+    method = aliases.get(method, method)
+    if method not in {"raw", "savgol", "butterworth"}:
+        raise ValueError(
+            "CHAMBER_SMOOTH_METHOD must be 'raw', 'savgol' or 'butterworth'"
+        )
+    return method
+
+
+def _record_selected_smoothing(block, key, candidates, method, timescale_seconds):
+    """Store all candidates and make the selected one the working forcing series."""
+    block[f"{key}_despiked"] = np.asarray(candidates["despiked"], dtype=float)
+    block[f"{key}_savgol"] = np.asarray(candidates["savgol"], dtype=float)
+    block[f"{key}_butterworth"] = np.asarray(candidates["butterworth"], dtype=float)
+    block[key] = np.asarray(candidates[method], dtype=float).copy()
+
+    filled = np.asarray(candidates["raw"], dtype=float)
+    selected = np.asarray(block[key], dtype=float)
+    correction = selected - filled
+    info = {
+        "selected_method": method,
+        "timescale_seconds": float(timescale_seconds),
+        "rms_correction": float(np.sqrt(np.mean(correction**2))),
+        "max_abs_correction": float(np.max(np.abs(correction))),
+        "mean_correction": float(np.mean(correction)),
+        "n_despiked": int(candidates["info"]["despike"]["n_despiked"]),
+        "despike_window_seconds": float(
+            candidates["info"]["despike"]["despike_window_seconds"]
+        ),
+        "despike_nsigma": float(candidates["info"]["despike"]["despike_nsigma"]),
+        "savgol": dict(candidates["info"]["savgol"]),
+        "butterworth": dict(candidates["info"]["butterworth"]),
+    }
+    block["forcing_smoothing"][key] = info
+
+
 def _smooth_chamber_forcing_block(block, *, experiment):
-    """Preserve raw forcing observations and replace working P/T fields by smooth data."""
+    """Prepare robust chamber P/T forcing and retain all smoothing alternatives.
+
+    Gas temperature and pressure are smoothed directly.  By default the wall
+    temperature is reconstructed as
+
+        T_wall,filtered = T_gas,filtered + filtered(T_wall - T_gas)
+
+    so filtering does not accidentally distort the wall-minus-gas temperature
+    contrast that drives the chamber boundary-layer treatment.
+    """
     time = np.asarray(block["Time"], dtype=float)
-    settings = [
-        ("Tgw mean", cfg.CHAMBER_SMOOTH_TEMP_WINDOW, "gas temperature"),
-        ("Tww mean", cfg.CHAMBER_SMOOTH_WALL_TEMP_WINDOW, "wall temperature"),
-        ("Pressure", cfg.CHAMBER_SMOOTH_PRESSURE_WINDOW, "pressure"),
-    ]
+    method = _selected_smoothing_method()
     block.setdefault("forcing_smoothing", {})
 
-    for key, window, label in settings:
+    # Preserve raw instrument observations once and fill only missing values.
+    for key, label in (
+        ("Tgw mean", "gas temperature"),
+        ("Tww mean", "wall temperature"),
+        ("Pressure", "pressure"),
+    ):
         raw_key = f"{key}_raw"
-        # Store the originally read observations, including any NaNs, once.
         if raw_key not in block:
             block[raw_key] = np.asarray(block[key], dtype=float).copy()
-
-        # Fill missing observations before filtering.  This filled series is
-        # retained too because it makes diagnosing gaps versus filtering easy.
         filled = _fill_nan_linear(time, block[key], name=f"{experiment} {label}")
         block[f"{key}_filled"] = filled.copy()
 
-        if cfg.SMOOTH_CHAMBER_FORCING:
-            smooth, info = _savgol_time_series(
-                time, filled, window, cfg.CHAMBER_SMOOTH_POLYORDER,
-                name=f"{experiment} {label}",
+    temp_window = float(_smoothing_cfg("CHAMBER_SMOOTH_TEMP_WINDOW", 30.0))
+    wall_window = float(_smoothing_cfg("CHAMBER_SMOOTH_WALL_TEMP_WINDOW", 45.0))
+    pressure_window = float(_smoothing_cfg("CHAMBER_SMOOTH_PRESSURE_WINDOW", 15.0))
+
+    gas_candidates = _smoothing_candidates(
+        time, block["Tgw mean_filled"], temp_window,
+        name=f"{experiment} gas temperature",
+    )
+    pressure_candidates = _smoothing_candidates(
+        time, block["Pressure_filled"], pressure_window,
+        name=f"{experiment} pressure",
+    )
+
+    use_delta_t = bool(
+        _smoothing_cfg("CHAMBER_SMOOTH_WALL_AS_DELTA_T", True)
+    )
+    if use_delta_t:
+        delta_filled = (
+            np.asarray(block["Tww mean_filled"], dtype=float)
+            - np.asarray(block["Tgw mean_filled"], dtype=float)
+        )
+        delta_candidates = _smoothing_candidates(
+            time, delta_filled, wall_window,
+            name=f"{experiment} wall-minus-gas temperature",
+        )
+        wall_candidates = {
+            "raw": np.asarray(block["Tww mean_filled"], dtype=float),
+            "despiked": gas_candidates["despiked"] + delta_candidates["despiked"],
+            "savgol": gas_candidates["savgol"] + delta_candidates["savgol"],
+            "butterworth": (
+                gas_candidates["butterworth"] + delta_candidates["butterworth"]
+            ),
+            "info": {
+                "despike": delta_candidates["info"]["despike"],
+                "savgol": delta_candidates["info"]["savgol"],
+                "butterworth": delta_candidates["info"]["butterworth"],
+            },
+        }
+        block["wall_minus_gas_raw"] = delta_filled
+        block["wall_minus_gas_despiked"] = delta_candidates["despiked"]
+        block["wall_minus_gas_savgol"] = delta_candidates["savgol"]
+        block["wall_minus_gas_butterworth"] = delta_candidates["butterworth"]
+    else:
+        wall_candidates = _smoothing_candidates(
+            time, block["Tww mean_filled"], wall_window,
+            name=f"{experiment} wall temperature",
+        )
+        block["wall_minus_gas_raw"] = (
+            np.asarray(block["Tww mean_filled"])
+            - np.asarray(block["Tgw mean_filled"])
+        )
+        for candidate_method in ("despiked", "savgol", "butterworth"):
+            block[f"wall_minus_gas_{candidate_method}"] = (
+                np.asarray(wall_candidates[candidate_method])
+                - np.asarray(gas_candidates[candidate_method])
             )
-            block[key] = smooth
-            correction = smooth - filled
-            info.update(
-                {
-                    "rms_correction": float(np.sqrt(np.mean(correction**2))),
-                    "max_abs_correction": float(np.max(np.abs(correction))),
-                    "mean_correction": float(np.mean(correction)),
-                }
-            )
-            block["forcing_smoothing"][key] = info
-        else:
-            block[key] = filled
-            block["forcing_smoothing"][key] = {
-                "median_dt_s": float(np.median(np.diff(time))),
-                "window_samples": 1,
-                "window_seconds_effective": 0.0,
-                "max_dt_irregularity_fraction": 0.0,
-                "rms_correction": 0.0,
-                "max_abs_correction": 0.0,
-                "mean_correction": 0.0,
-            }
+
+    _record_selected_smoothing(
+        block, "Tgw mean", gas_candidates, method, temp_window
+    )
+    _record_selected_smoothing(
+        block, "Tww mean", wall_candidates, method, wall_window
+    )
+    _record_selected_smoothing(
+        block, "Pressure", pressure_candidates, method, pressure_window
+    )
+
+    block["wall_minus_gas"] = (
+        np.asarray(block["Tww mean"], dtype=float)
+        - np.asarray(block["Tgw mean"], dtype=float)
+    )
+    block["forcing_smoothing"]["wall_as_delta_t"] = use_delta_t
+    block["forcing_smoothing"]["selected_method"] = method
+
+
+def _series_derivative(time, values):
+    """Return d(values)/dt on the native time grid."""
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    return np.gradient(values, time)
 
 
 def _write_forcing_smoothing_diagnostics(data):
-    """Write raw-vs-smoothed forcing plots and a compact CSV summary."""
-    if not cfg.SAVE_FORCING_SMOOTHING_DIAGNOSTICS:
+    """Compare raw, despiked, Savitzky-Golay and Butterworth chamber forcing."""
+    if not bool(_smoothing_cfg("SAVE_FORCING_SMOOTHING_DIAGNOSTICS", False)):
         return
 
     outdir = cfg.OUTPUT_ROOT / "forcing_smoothing"
     outdir.mkdir(parents=True, exist_ok=True)
     rows = []
+
+    method_colours = {
+        "raw": "#7F7F7F",
+        "despiked": "#CC79A7",
+        "savgol": "#0072B2",
+        "butterworth": "#009E73",
+    }
 
     for key in readMeteoCPC.metStr:
         if key not in data:
@@ -204,62 +443,163 @@ def _write_forcing_smoothing_diagnostics(data):
         met = data[key]
         exp = key.split("-")[-1]
         time = np.asarray(met["Time"], dtype=float)
+        selected = met.get("forcing_smoothing", {}).get("selected_method", "raw")
 
-        for field in ("Tgw mean", "Tww mean", "Pressure"):
+        field_specs = (
+            ("Tgw mean", "Gas temperature", "degC"),
+            ("Tww mean", "Wall temperature", "degC"),
+            ("Pressure", "Pressure", "hPa"),
+        )
+        for field, label, units in field_specs:
             info = met.get("forcing_smoothing", {}).get(field, {})
-            rows.append(
-                {
-                    "experiment": exp,
-                    "field": field,
-                    "median_dt_s": info.get("median_dt_s", np.nan),
-                    "window_samples": info.get("window_samples", np.nan),
-                    "window_seconds_effective": info.get("window_seconds_effective", np.nan),
-                    "max_dt_irregularity_fraction": info.get("max_dt_irregularity_fraction", np.nan),
-                    "rms_correction": info.get("rms_correction", np.nan),
-                    "max_abs_correction": info.get("max_abs_correction", np.nan),
-                    "mean_correction": info.get("mean_correction", np.nan),
-                }
+            raw = np.asarray(met[f"{field}_filled"], dtype=float)
+            for method in ("raw", "despiked", "savgol", "butterworth"):
+                series_key = (
+                    f"{field}_filled" if method == "raw" else f"{field}_{method}"
+                )
+                series = np.asarray(met[series_key], dtype=float)
+                correction = series - raw
+                deriv = _series_derivative(time, series)
+                rows.append(
+                    {
+                        "experiment": exp,
+                        "field": field,
+                        "units": units,
+                        "method": method,
+                        "selected": method == selected,
+                        "timescale_seconds": info.get("timescale_seconds", 0.0),
+                        "n_despiked": info.get("n_despiked", 0),
+                        "rms_correction": float(np.sqrt(np.mean(correction**2))),
+                        "max_abs_correction": float(np.max(np.abs(correction))),
+                        "derivative_rms_per_s": float(np.sqrt(np.mean(deriv**2))),
+                        "derivative_max_abs_per_s": float(np.max(np.abs(deriv))),
+                    }
+                )
+
+        fig, axes = plt.subplots(4, 2, figsize=(14, 14), sharex=True)
+        ax = axes.ravel()
+
+        # Gas temperature and its time derivative.
+        for method in ("raw", "despiked", "savgol", "butterworth"):
+            key_name = (
+                "Tgw mean_filled" if method == "raw" else f"Tgw mean_{method}"
             )
+            linewidth = 2.4 if method == selected else 1.3
+            alpha = 1.0 if method == selected else 0.72
+            label = f"{method}" + (" [FORCING]" if method == selected else "")
+            y = np.asarray(met[key_name], dtype=float)
+            ax[0].plot(
+                time / 60.0, y, color=method_colours[method],
+                linewidth=linewidth, alpha=alpha, label=label,
+            )
+            ax[1].plot(
+                time / 60.0, _series_derivative(time, y),
+                color=method_colours[method], linewidth=linewidth,
+                alpha=alpha, label=label,
+            )
+        ax[0].set_title("Gas temperature smoothing comparison")
+        ax[0].set_ylabel(r"$T_{gas}$ ($^\circ$C)")
+        ax[1].set_title("Gas-temperature derivative")
+        ax[1].set_ylabel(r"$dT_{gas}/dt$ (K s$^{-1}$)")
 
-        fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
+        # Wall temperature and the physically important wall-gas contrast.
+        for method in ("raw", "despiked", "savgol", "butterworth"):
+            wall_key = (
+                "Tww mean_filled" if method == "raw" else f"Tww mean_{method}"
+            )
+            delta_key = (
+                "wall_minus_gas_raw"
+                if method == "raw"
+                else f"wall_minus_gas_{method}"
+            )
+            linewidth = 2.4 if method == selected else 1.3
+            alpha = 1.0 if method == selected else 0.72
+            label = f"{method}" + (" [FORCING]" if method == selected else "")
+            ax[2].plot(
+                time / 60.0, np.asarray(met[wall_key]),
+                color=method_colours[method], linewidth=linewidth,
+                alpha=alpha, label=label,
+            )
+            ax[3].plot(
+                time / 60.0, np.asarray(met[delta_key]),
+                color=method_colours[method], linewidth=linewidth,
+                alpha=alpha, label=label,
+            )
+        ax[2].set_title("Wall temperature smoothing comparison")
+        ax[2].set_ylabel(r"$T_{wall}$ ($^\circ$C)")
+        ax[3].set_title(r"Wall–gas contrast (important for BL forcing)")
+        ax[3].set_ylabel(r"$T_{wall}-T_{gas}$ (K)")
+        ax[3].axhline(0.0, color="0.5", linewidth=0.8)
 
-        axes[0].plot(time, met["Tgw mean_raw"], alpha=0.45, label="gas raw")
-        axes[0].plot(time, met["Tgw mean"], label="gas smoothed")
-        axes[0].plot(time, met["Tww mean_raw"], alpha=0.45, label="wall raw")
-        axes[0].plot(time, met["Tww mean"], label="wall smoothed")
-        axes[0].set_ylabel("Temperature (degC)")
-        axes[0].legend(ncol=2)
-        axes[0].grid()
+        # Pressure and derivative.
+        for method in ("raw", "despiked", "savgol", "butterworth"):
+            pkey = "Pressure_filled" if method == "raw" else f"Pressure_{method}"
+            linewidth = 2.4 if method == selected else 1.3
+            alpha = 1.0 if method == selected else 0.72
+            label = f"{method}" + (" [FORCING]" if method == selected else "")
+            p = np.asarray(met[pkey], dtype=float)
+            ax[4].plot(
+                time / 60.0, p, color=method_colours[method],
+                linewidth=linewidth, alpha=alpha, label=label,
+            )
+            ax[5].plot(
+                time / 60.0, _series_derivative(time, p),
+                color=method_colours[method], linewidth=linewidth,
+                alpha=alpha, label=label,
+            )
+        ax[4].set_title("Pressure smoothing comparison")
+        ax[4].set_ylabel("Pressure (hPa)")
+        ax[5].set_title("Pressure derivative")
+        ax[5].set_ylabel(r"$dP/dt$ (hPa s$^{-1}$)")
 
-        delta_raw = np.asarray(met["Tww mean_raw"]) - np.asarray(met["Tgw mean_raw"])
-        delta_smooth = np.asarray(met["Tww mean"]) - np.asarray(met["Tgw mean"])
-        axes[1].plot(time, delta_raw, alpha=0.45, label="raw")
-        axes[1].plot(time, delta_smooth, label="smoothed")
-        axes[1].axhline(0.0, linewidth=0.8)
-        axes[1].set_ylabel(r"$T_{wall}-T_{gas}$ (K)")
-        axes[1].legend()
-        axes[1].grid()
+        # Residuals show exactly what each smoother removes.
+        gas_raw = np.asarray(met["Tgw mean_filled"], dtype=float)
+        p_raw = np.asarray(met["Pressure_filled"], dtype=float)
+        for method in ("despiked", "savgol", "butterworth"):
+            ax[6].plot(
+                time / 60.0,
+                np.asarray(met[f"Tgw mean_{method}"]) - gas_raw,
+                color=method_colours[method], label=method,
+            )
+            ax[7].plot(
+                time / 60.0,
+                np.asarray(met[f"Pressure_{method}"]) - p_raw,
+                color=method_colours[method], label=method,
+            )
+        ax[6].set_title("Gas-temperature correction")
+        ax[6].set_ylabel(r"Filtered - raw $T$ (K)")
+        ax[7].set_title("Pressure correction")
+        ax[7].set_ylabel("Filtered - raw P (hPa)")
 
-        axes[2].plot(time, met["Pressure_raw"], alpha=0.45, label="raw")
-        axes[2].plot(time, met["Pressure"], label="smoothed")
-        axes[2].set_ylabel("Pressure (hPa)")
-        axes[2].set_xlabel("Experiment time (s)")
-        axes[2].legend()
-        axes[2].grid()
+        for a in ax:
+            a.grid(alpha=0.3)
+            a.legend(fontsize=8, loc="best")
+            a.set_xlabel("Experiment time (min)")
 
-        state = "enabled" if cfg.SMOOTH_CHAMBER_FORCING else "disabled"
-        fig.suptitle(f"{exp}: chamber forcing smoothing ({state})")
-        fig.tight_layout()
-        fig.savefig(outdir / f"forcing-smoothing-{exp}.png", dpi=160)
+        gas_info = met["forcing_smoothing"]["Tgw mean"]
+        wall_info = met["forcing_smoothing"]["Tww mean"]
+        p_info = met["forcing_smoothing"]["Pressure"]
+        delta_mode = met["forcing_smoothing"].get("wall_as_delta_t", False)
+        fig.suptitle(
+            f"{exp}: chamber-forcing smoothing\n"
+            f"selected={selected}; T={gas_info['timescale_seconds']:.0f}s, "
+            f"wall/ΔT={wall_info['timescale_seconds']:.0f}s, "
+            f"P={p_info['timescale_seconds']:.0f}s; "
+            f"wall-as-ΔT={delta_mode}",
+            fontsize=13,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        fig.savefig(outdir / f"forcing-smoothing-comparison-{exp}.png", dpi=180)
         plt.close(fig)
 
     if rows:
-        csv_path = outdir / "forcing-smoothing-summary.csv"
+        csv_path = outdir / "forcing-smoothing-method-comparison.csv"
         with csv_path.open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
             writer.writeheader()
             writer.writerows(rows)
         print(f"Forcing-smoothing diagnostics written to {outdir}")
+
 
 # Historical batch group to run when executing this file directly.
 THIS_RUN = 6
@@ -853,11 +1193,37 @@ def analyse_batch(batch_sims, states, data, vals1, vals2, group_type):
         with Dataset(path) as nc:
             nwat = np.asarray(nc["nwat"][:])
             mwat = np.asarray(nc["mwat"][:])
-            dwat = np.where(mwat > 0.0, (mwat / (np.pi / 6.0 * 1000.0)) ** (1.0 / 3.0), 0.0)
-            conc = np.sum(np.where(dwat > 2.0e-6, nwat, 0.0), axis=(1, 2))
+            if "dwet" in nc.variables:
+                dwet = np.asarray(nc["dwet"][:])
+            else:
+                dwet = np.where(
+                    mwat > 0.0,
+                    (mwat / (np.pi / 6.0 * 1000.0)) ** (1.0 / 3.0),
+                    0.0,
+                )
             time = np.asarray(nc["time"][:])
             p = np.asarray(nc["p"][:])
             t = np.asarray(nc["t"][:])
+            batch_model = {
+                "time": time,
+                "nwat": nwat,
+                "mwat": mwat,
+                "dwet": dwet,
+            }
+            if "mbinedges" in nc.variables:
+                batch_model["mbinedges"] = np.asarray(nc["mbinedges"][:])
+            if "bin_scheme_flag" in nc.variables:
+                batch_model["bin_scheme_flag"] = np.asarray(nc["bin_scheme_flag"][:])
+            elif "bin_scheme_flag" in nc.ncattrs():
+                batch_model["bin_scheme_flag"] = np.asarray(
+                    [nc.getncattr("bin_scheme_flag")]
+                )
+            fraction = _warm_fraction_above_diameter(
+                batch_model, cfg.SINGLE_COMPARE_DROP_MIN_UM
+            )
+            conc = np.sum(
+                nwat * fraction, axis=tuple(range(1, nwat.ndim))
+            )
             window = meta.CLOUD_WINDOWS[exp]
             mask = (time > window[0]) & (time <= window[1])
             if not np.any(mask):
@@ -869,9 +1235,9 @@ def analyse_batch(batch_sims, states, data, vals1, vals2, group_type):
     cdnc_obs = np.zeros(len(batch_sims))
     for i, exp in enumerate(batch_sims):
         opc = data[f"MergedOPC-{exp}"]
-        # Recalculate drop number from bins >2 um using the historical OPC
+        # Recalculate observed drop number above the configured diameter cutoff using the historical OPC
         # calibration factor; retain the supplied ndrop field separately.
-        diam_mask = opc["Dp"] > 2.0
+        diam_mask = opc["Dp"] > float(cfg.SINGLE_COMPARE_DROP_MIN_UM)
         opc["ndrop"] = np.nansum(opc["Conc"][:, diam_mask], axis=1) * 0.009839
         cdnc_obs[i] = peak_cdnc(meta.CLOUD_WINDOWS[exp], opc)
 
@@ -893,29 +1259,29 @@ def analyse_batch(batch_sims, states, data, vals1, vals2, group_type):
 
     fig = plt.figure(figsize=(15, 4))
     ax = fig.add_subplot(131)
-    ax.plot(x, ndrop_model / ndrop_model[0], ".-", ms=10)
-    ax.plot(x, cdnc_obs / cdnc_obs[0], ".-", ms=10)
+    ax.plot(x, ndrop_model / ndrop_model[0], ".-", ms=10, color="#0072B2", label="BMM")
+    ax.plot(x, cdnc_obs / cdnc_obs[0], ".-", ms=10, color="#000000", label="iSKYLAB/WELAS")
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Relative number of drops")
-    ax.legend(["model", "data"])
+    ax.legend()
     ax.grid()
 
     ax = fig.add_subplot(132)
     denom = vals1_cm3 + vals2_cm3
-    ax.plot(x, ndrop_model / denom, ".-", ms=10)
-    ax.plot(x, cdnc_obs / denom, ".-", ms=10)
+    ax.plot(x, ndrop_model / denom, ".-", ms=10, color="#0072B2", label="BMM")
+    ax.plot(x, cdnc_obs / denom, ".-", ms=10, color="#000000", label="iSKYLAB/WELAS")
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Activated fraction")
-    ax.legend(["model", "data"])
+    ax.legend()
     ax.set_ylim((0, 1))
     ax.grid()
 
     ax = fig.add_subplot(133)
-    ax.plot(x, ndrop_model, ".-", ms=10)
-    ax.plot(x, cdnc_obs, ".-", ms=10)
+    ax.plot(x, ndrop_model, ".-", ms=10, color="#0072B2", label="BMM")
+    ax.plot(x, cdnc_obs, ".-", ms=10, color="#000000", label="iSKYLAB/WELAS")
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Number of drops (cm$^{-3}$)")
-    ax.legend(["model", "data"])
+    ax.legend()
     ax.grid()
     fig.tight_layout()
     return fig
@@ -1042,13 +1408,106 @@ def _observed_bulk_series(exp, data):
     }
 
 
+def _model_bin_scheme_flag(model):
+    """Return BMM bin_scheme_flag from model output; old files default to 0."""
+    if "bin_scheme_flag" not in model:
+        return 0
+    value = np.asarray(model["bin_scheme_flag"]).reshape(-1)
+    if value.size == 0 or not np.isfinite(value[0]):
+        return 0
+    return int(round(float(value[0])))
+
+
+def _fixed_warm_mass_edges_for_native_shape(model, warm_shape):
+    """Broadcast fixed water-mass lower/upper edges onto native warm-bin shape."""
+    if "mbinedges" not in model:
+        return None, None
+    edges = np.asarray(model["mbinedges"], dtype=float)
+    if edges.ndim != 2 or len(warm_shape) != 3:
+        return None, None
+
+    a, b = warm_shape[1], warm_shape[2]
+    candidates = (edges, edges.T)
+    for e in candidates:
+        if e.shape == (a, b + 1):
+            lower = e[:, :-1][None, :, :]
+            upper = e[:, 1:][None, :, :]
+            return np.broadcast_to(lower, warm_shape), np.broadcast_to(upper, warm_shape)
+        if e.shape == (a + 1, b):
+            lower = e[:-1, :][None, :, :]
+            upper = e[1:, :][None, :, :]
+            return np.broadcast_to(lower, warm_shape), np.broadcast_to(upper, warm_shape)
+    return None, None
+
+
+def _warm_fraction_above_diameter(model, dmin_um):
+    """Return the native warm-bin number fraction above a wet-D threshold.
+
+    Full-moving (flag 0) remains a pointwise 0/1 test.  For fixed water-mass
+    schemes 1 and 2, Dmin is converted to the water mass required for that wet
+    diameter after subtracting the inferred dry-particle volume.  If the
+    threshold lies inside a fixed mass bin,
+
+        f = (mupper - mthreshold) / (mupper - mlower),
+
+    clipped to [0,1].
+    """
+    if "dwet" not in model or "nwat" not in model:
+        return None
+    d = np.asarray(model["dwet"], dtype=float)
+    n = np.asarray(model["nwat"], dtype=float)
+    if d.shape != n.shape:
+        raise ValueError(f"dwet/nwat shape mismatch: {d.shape} vs {n.shape}")
+
+    dmin = float(dmin_um) * 1.0e-6
+    point = np.where(
+        np.isfinite(d) & np.isfinite(n) & (d > dmin) & (n > 0.0), 1.0, 0.0
+    )
+
+    scheme = _model_bin_scheme_flag(model)
+    if scheme == 0:
+        return point
+    if scheme not in (1, 2):
+        raise ValueError(f"Unknown bin_scheme_flag={scheme}")
+    if "mwat" not in model or "mbinedges" not in model:
+        return point
+
+    mwat = np.asarray(model["mwat"], dtype=float)
+    if mwat.shape != d.shape:
+        raise ValueError(f"mwat/dwet shape mismatch: {mwat.shape} vs {d.shape}")
+
+    mlower, mupper = _fixed_warm_mass_edges_for_native_shape(model, d.shape)
+    if mlower is None:
+        return point
+
+    rho_w = 1000.0
+    wet_volume = np.pi / 6.0 * np.maximum(d, 0.0)**3
+    dry_volume = np.maximum(wet_volume - np.maximum(mwat, 0.0) / rho_w, 0.0)
+    threshold_volume = np.pi / 6.0 * dmin**3
+    mthreshold = rho_w * np.maximum(threshold_volume - dry_volume, 0.0)
+
+    width = mupper - mlower
+    if np.any(~np.isfinite(width)) or np.any(width <= 0.0):
+        raise ValueError("Invalid fixed water-mass bin width in model output")
+
+    frac = np.where(
+        mthreshold <= mlower, 1.0,
+        np.where(
+            mthreshold >= mupper, 0.0,
+            (mupper - mthreshold) / width,
+        ),
+    )
+    frac = np.clip(frac, 0.0, 1.0)
+    return np.where(np.isfinite(d) & np.isfinite(n) & (n > 0.0), frac, 0.0)
+
+
 def _model_bulk_moments_above(model, dmin_um):
     """Return OPC-like BMM number/size moments above a wet-diameter threshold.
 
     These moments are calculated from the raw native `(nwat,dwet)` output, not
-    from the model activation flag.  They therefore provide an apples-to-apples
-    comparison with an optical instrument whose sample definition is diameter
-    rather than Koehler activation state.
+    from the model activation flag.  For fixed-bin schemes 1 and 2, a cutoff
+    inside a native water-mass bin contributes only the corresponding fraction
+    of that bin; full-moving particles remain pointwise.
     """
     out = {name: np.full_like(model["time"], np.nan, dtype=float) for name in
            ("number_cm3", "dmean_um", "dvol_um", "deff_um", "rel_disp")}
@@ -1059,7 +1518,8 @@ def _model_bulk_moments_above(model, dmin_um):
     if d.shape != n.shape:
         raise ValueError(f"dwet/nwat shape mismatch: {d.shape} vs {n.shape}")
     axes = tuple(range(1, n.ndim))
-    w = np.where(d > dmin_um * 1.0e-6, n, 0.0)
+    fraction = _warm_fraction_above_diameter(model, dmin_um)
+    w = n * fraction
     m0 = np.sum(w, axis=axes)
     m1 = np.sum(w*d, axis=axes)
     m2 = np.sum(w*d**2, axis=axes)
@@ -1116,8 +1576,13 @@ def _model_total_hydrometeor_moments_above(model, dmin_um):
                 f"{dkey}/{nkey} time dimension {d.shape[0]} does not match time {nt}"
             )
         axes = tuple(range(1, n.ndim))
-        good = np.isfinite(d) & np.isfinite(n) & (d > dmin) & (n > 0.0)
-        w = np.where(good, n, 0.0)
+        if dkey == "dwet" and nkey == "nwat":
+            fraction = _warm_fraction_above_diameter(model, dmin_um)
+            w = np.where(np.isfinite(n), n * fraction, 0.0)
+        else:
+            # Ice Dmax is shape-dependent, so keep ice pointwise at Dmin.
+            good = np.isfinite(d) & np.isfinite(n) & (d > dmin) & (n > 0.0)
+            w = np.where(good, n, 0.0)
         m0 += np.sum(w, axis=axes)
         m1 += np.sum(w * d, axis=axes)
         m2 += np.sum(w * d**2, axis=axes)
@@ -1170,16 +1635,15 @@ def _model_welas_equivalent_ql_above(model, dmin_um):
     if d.shape != n.shape:
         raise ValueError(f"dwet/nwat shape mismatch: {d.shape} vs {n.shape}")
 
-    dmin = float(dmin_um) * 1.0e-6
-    good = (
-        np.isfinite(d) & np.isfinite(n) &
-        (d > dmin) & (n > 0.0)
-    )
+    fraction = _warm_fraction_above_diameter(model, dmin_um)
     axes = tuple(range(1, n.ndim))
     rho_w = 1000.0
+    weighted_number = np.where(
+        np.isfinite(d) & np.isfinite(n), n * fraction, 0.0
+    )
     return (
         rho_w * np.pi / 6.0
-        * np.sum(np.where(good, n * d**3, 0.0), axis=axes)
+        * np.sum(weighted_number * d**3, axis=axes)
     )
 
 
@@ -1483,124 +1947,233 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
     int_ql_model_above = float(np.trapezoid(ql_model_above[mt_mask], np.asarray(model["time"])[mt_mask])) if np.count_nonzero(mt_mask) > 1 else np.nan
     int_ql_obs_above = float(np.trapezoid(ql_obs_above[ot_mask], obs["time"][ot_mask])) if np.count_nonzero(ot_mask) > 1 else np.nan
 
-    fig, axes = plt.subplots(4, 2, figsize=(14, 16), sharex=False)
+    # Consistent, colour-blind-friendly styling for the iSKYLAB comparison.
+    # Source is primarily encoded by colour and phase/definition by linestyle,
+    # so the plots remain readable in colour and when printed in greyscale.
+    C_OBS = "#000000"       # observations / WELAS
+    C_OBS_ALT = "#7F7F7F"   # alternate observational diagnostic
+    C_BMM = "#0072B2"       # BMM liquid / primary model
+    C_BMM_TOTAL = "#009E73" # BMM total liquid+ice
+    C_ICE = "#D55E00"       # ice
+    C_WALL = "#CC79A7"      # chamber wall
+    C_FORCING = "#E69F00"   # forcing / auxiliary
+    C_ACT = "#56B4E9"       # activated-liquid diagnostic
+
+    fig, axes = plt.subplots(4, 2, figsize=(15, 17), sharex=False)
     ax = axes.ravel()
-    # Pressure
-    ax[0].plot(met["Time"] / 60.0, met["Pressure"], label="observed/forced")
-    ax[0].plot(model["time"] / 60.0, np.asarray(model["p"]) / 100.0, "--", label="BMM")
-    ax[0].set_ylabel("Pressure (hPa)"); ax[0].legend(); ax[0].grid()
-    # Temperature
-    ax[1].plot(met["Time"] / 60.0, met["Tgw mean"], label="gas obs/forcing")
+
+    # (a) Pressure
+    ax[0].plot(
+        met["Time"] / 60.0, met["Pressure"],
+        color=C_OBS, linewidth=1.8, label="iSKYLAB pressure forcing",
+    )
+    ax[0].plot(
+        model["time"] / 60.0, np.asarray(model["p"]) / 100.0,
+        color=C_BMM, linestyle="--", linewidth=1.8, label="BMM pressure",
+    )
+    ax[0].set_title("(a) Chamber pressure")
+    ax[0].set_ylabel("Pressure (hPa)")
+    ax[0].legend(fontsize=8, loc="best")
+    ax[0].grid(alpha=0.3)
+
+    # (b) Temperature
+    ax[1].plot(
+        met["Time"] / 60.0, met["Tgw mean"],
+        color=C_OBS, linewidth=1.8, label="iSKYLAB gas temperature / forcing",
+    )
     if "Tww mean" in met:
-        ax[1].plot(met["Time"] / 60.0, met["Tww mean"], label="wall")
-    ax[1].plot(model["time"] / 60.0, np.asarray(model["t"]) - 273.15, "--", label="BMM gas")
-    ax[1].set_ylabel("Temperature (degC)"); ax[1].legend(); ax[1].grid()
-    # Liquid water.  Always show both the unrestricted/reader-total quantities
-    # and the directly matched WELAS-equivalent D>Dmin virtual-instrument pair.
+        ax[1].plot(
+            met["Time"] / 60.0, met["Tww mean"],
+            color=C_WALL, linewidth=1.5, label="iSKYLAB wall temperature",
+        )
+    ax[1].plot(
+        model["time"] / 60.0, np.asarray(model["t"]) - 273.15,
+        color=C_BMM, linestyle="--", linewidth=1.8, label="BMM gas temperature",
+    )
+    ax[1].set_title("(b) Chamber temperature")
+    ax[1].set_ylabel(r"Temperature ($^\circ$C)")
+    ax[1].legend(fontsize=8, loc="best")
+    ax[1].grid(alpha=0.3)
+
+    # (c) Water mixing ratios.  Keep total and WELAS-equivalent definitions
+    # visibly distinct while using a stable observation/model colour convention.
     total_selected = ql_mode == "total"
     above_selected = ql_mode == "above_min"
     ax[2].plot(
         obs["time"] / 60.0, ql_obs_total * 1.0e3,
+        color=C_OBS,
         linestyle="-" if total_selected else "--",
-        alpha=1.0 if total_selected else 0.55, label="WELAS total LWC",
+        linewidth=2.0 if total_selected else 1.4,
+        alpha=1.0 if total_selected else 0.65,
+        label="iSKYLAB/WELAS total liquid water",
     )
     ax[2].plot(
         model["time"] / 60.0, ql_model_total * 1.0e3,
+        color=C_BMM,
         linestyle="-" if total_selected else "--",
-        alpha=1.0 if total_selected else 0.55, label="BMM total ql",
+        linewidth=2.0 if total_selected else 1.4,
+        alpha=1.0 if total_selected else 0.65,
+        label="BMM total liquid water",
     )
     ax[2].plot(
         obs["time"] / 60.0, ql_obs_above * 1.0e3,
+        color=C_OBS_ALT,
         linestyle="-" if above_selected else ":",
-        alpha=1.0 if above_selected else 0.55,
-        label=f"WELAS PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+        linewidth=2.0 if above_selected else 1.5,
+        alpha=1.0 if above_selected else 0.75,
+        label=f"iSKYLAB/WELAS liquid water, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
     ax[2].plot(
         model["time"] / 60.0, ql_model_above * 1.0e3,
-        linestyle="-" if above_selected else ":",
-        alpha=1.0 if above_selected else 0.55,
-        label=f"BMM WELAS-eq >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+        color=C_BMM,
+        linestyle="-." if above_selected else ":",
+        linewidth=2.0 if above_selected else 1.5,
+        alpha=1.0 if above_selected else 0.75,
+        label=f"BMM WELAS-equivalent liquid water, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
     if abs(lag) > 0.0:
         shifted_obs_label = (
-            "WELAS total LWC" if ql_mode == "total"
-            else f"WELAS PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um"
+            "iSKYLAB/WELAS total liquid water" if ql_mode == "total"
+            else f"iSKYLAB/WELAS D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm"
         )
         ax[2].plot(
             (obs["time"] - lag) / 60.0, ql_obs_compare * 1.0e3,
-            ":", alpha=0.75,
-            label=f"{shifted_obs_label} shifted {-lag:+.0f}s",
+            color=C_FORCING, linestyle=":", linewidth=1.5, alpha=0.9,
+            label=f"{shifted_obs_label}, time-shifted {-lag:+.0f} s",
         )
     if np.any(np.isfinite(qi_model)):
         ax[2].plot(
-            model["time"] / 60.0, qi_model * 1.0e3, "-.",
-            label="BMM ice water qi",
+            model["time"] / 60.0, qi_model * 1.0e3,
+            color=C_ICE, linestyle="-.", linewidth=1.8,
+            label="BMM ice water",
         )
-    ax[2].set_ylabel(r"Water mixing ratio (g kg$^{-1}$)"); ax[2].legend(fontsize=8); ax[2].grid()
-    # Number: liquid/drop number on the left axis and ice-crystal number on a
-    # secondary right axis so the often much smaller Ni remains visible.
-    ax[3].plot(obs["time"] / 60.0, obs["ndrop"], label="WELAS Nd field")
-    ax[3].plot(obs["time"] / 60.0, obs["ndrop_psd"], ":", label=f"WELAS merged PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
-    ax[3].plot(model["time"] / 60.0, nd_model, label="BMM activated liquid")
-    ax[3].plot(model["time"] / 60.0, nd_model_2um, "--", label=f"BMM liquid >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
-    ax[3].set_ylabel(r"$N_d$ (cm$^{-3}$)")
+    ax[2].set_title("(c) Hydrometeor water mixing ratio")
+    ax[2].set_ylabel(r"Water mixing ratio (g kg$^{-1}$)")
+    ax[2].legend(fontsize=7.5, loc="best")
+    ax[2].grid(alpha=0.3)
+
+    # (d) Number concentrations.  The axis is stated explicitly in BOTH the
+    # ylabel and legend so there is no ambiguity on saved/static figures.
+    ax[3].plot(
+        obs["time"] / 60.0, obs["ndrop"],
+        color=C_OBS, linewidth=1.7,
+        label="[LEFT axis] iSKYLAB/WELAS $N_d$ field",
+    )
+    ax[3].plot(
+        obs["time"] / 60.0, obs["ndrop_psd"],
+        color=C_OBS_ALT, linestyle=":", linewidth=1.7,
+        label=f"[LEFT axis] iSKYLAB/WELAS $N$, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
+    )
+    ax[3].plot(
+        model["time"] / 60.0, nd_model,
+        color=C_BMM, linewidth=1.9,
+        label="[LEFT axis] BMM activated liquid $N_d$",
+    )
+    ax[3].plot(
+        model["time"] / 60.0, nd_model_2um,
+        color=C_BMM, linestyle="--", linewidth=1.7,
+        label=f"[LEFT axis] BMM liquid $N$, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
+    )
+    ax[3].set_ylabel(r"LEFT axis: liquid/drop number (cm$^{-3}$)")
+
     ax3i = ax[3].twinx()
     if np.any(np.isfinite(nice_obs_cm3)):
-        ax3i.plot(obs["time"] / 60.0, nice_obs_cm3, "-.", label="WELAS Ni")
+        ax3i.plot(
+            obs["time"] / 60.0, nice_obs_cm3,
+            color=C_ICE, linestyle="-.", linewidth=1.8,
+            label="[RIGHT axis] iSKYLAB/WELAS ice $N_i$",
+        )
     if np.any(np.isfinite(nice_model_cm3)):
-        ax3i.plot(model["time"] / 60.0, nice_model_cm3, ":", label="BMM Ni")
-    ax3i.set_ylabel(r"$N_i$ (cm$^{-3}$)")
+        ax3i.plot(
+            model["time"] / 60.0, nice_model_cm3,
+            color=C_ICE, linestyle=":", linewidth=2.0,
+            label="[RIGHT axis] BMM ice $N_i$",
+        )
+    ax3i.set_ylabel(r"RIGHT axis: ice-crystal number (cm$^{-3}$)", color=C_ICE)
+    ax3i.tick_params(axis="y", colors=C_ICE)
+    ax3i.spines["right"].set_color(C_ICE)
+    ax[3].set_title("(d) Particle number concentration — dual axis")
+
     h1, l1 = ax[3].get_legend_handles_labels()
     h2, l2 = ax3i.get_legend_handles_labels()
-    ax[3].legend(h1 + h2, l1 + l2, fontsize=8, loc="best")
-    ax[3].grid()
-    # Effective diameter.  The observed merged OPC/WELAS PSD can contain both
-    # liquid and ice, so show a total BMM liquid+ice moment as the primary
-    # comparison while retaining the liquid-only diagnostics.
-    ax[4].plot(obs["time"] / 60.0, obs["deff_um"], label="OPC/WELAS total PSD")
+    ax[3].legend(h1 + h2, l1 + l2, fontsize=7.2, loc="best")
+    ax[3].grid(alpha=0.3)
+
+    # (e) Effective diameter
+    ax[4].plot(
+        obs["time"] / 60.0, obs["deff_um"],
+        color=C_OBS, linewidth=1.8,
+        label="iSKYLAB/WELAS total PSD",
+    )
     ax[4].plot(
         model["time"] / 60.0, deff_model_total_um,
-        label=f"BMM total (liq+ice) >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+        color=C_BMM_TOTAL, linewidth=2.0,
+        label=f"BMM total liquid + ice, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
     ax[4].plot(
-        model["time"] / 60.0, deff_model_um, "--", alpha=0.75,
-        label=f"BMM liquid >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+        model["time"] / 60.0, deff_model_um,
+        color=C_BMM, linestyle="--", linewidth=1.6,
+        label=f"BMM liquid only, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
     ax[4].plot(
-        model["time"] / 60.0, deff_model_activated_um, ":", alpha=0.6,
+        model["time"] / 60.0, deff_model_activated_um,
+        color=C_ACT, linestyle=":", linewidth=1.6,
         label="BMM activated liquid",
     )
-    ax[4].set_ylabel(r"$D_{eff}$ ($\mu$m)"); ax[4].legend(fontsize=8); ax[4].grid()
-    # Relative dispersion: same total-vs-liquid distinction as Deff.
-    ax[5].plot(obs["time"] / 60.0, obs["rel_disp"], label="OPC/WELAS total PSD")
+    ax[4].set_title(r"(e) Effective diameter, $D_{eff}$")
+    ax[4].set_ylabel(r"$D_{eff}$ ($\mu$m)")
+    ax[4].legend(fontsize=7.5, loc="best")
+    ax[4].grid(alpha=0.3)
+
+    # (f) Relative dispersion
+    ax[5].plot(
+        obs["time"] / 60.0, obs["rel_disp"],
+        color=C_OBS, linewidth=1.8,
+        label="iSKYLAB/WELAS total PSD",
+    )
     ax[5].plot(
         model["time"] / 60.0, rel_model_total,
-        label=f"BMM total (liq+ice) >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+        color=C_BMM_TOTAL, linewidth=2.0,
+        label=f"BMM total liquid + ice, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
     ax[5].plot(
-        model["time"] / 60.0, rel_model, "--", alpha=0.75,
-        label=f"BMM liquid >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+        model["time"] / 60.0, rel_model,
+        color=C_BMM, linestyle="--", linewidth=1.6,
+        label=f"BMM liquid only, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
     ax[5].plot(
-        model["time"] / 60.0, rel_model_activated, ":", alpha=0.6,
+        model["time"] / 60.0, rel_model_activated,
+        color=C_ACT, linestyle=":", linewidth=1.6,
         label="BMM activated liquid",
     )
-    ax[5].set_ylabel(r"Relative dispersion $\sigma_D/\bar D$"); ax[5].legend(fontsize=8); ax[5].grid()
-    # Cumulative chamber/fallout losses
+    ax[5].set_title(r"(f) Relative diameter dispersion")
+    ax[5].set_ylabel(r"Relative dispersion, $\sigma_D/\bar D$")
+    ax[5].legend(fontsize=7.5, loc="best")
+    ax[5].grid(alpha=0.3)
+
+    # (g) Cumulative chamber/fallout diagnostics
     loss_fields = [
-        ("qfan_liq", "fan"), ("qwall_liq", "wall"),
-        ("qfall_liq", "fallout"), ("qchamber_bl", "BL wall water loss"),
-        ("qchamber_bl_evap", "BL liquid->vapour"),
+        ("qfan_liq", "Fan loss", C_BMM, "-"),
+        ("qwall_liq", "Wall loss", C_WALL, "-"),
+        ("qfall_liq", "Fallout", C_FORCING, "--"),
+        ("qchamber_bl", "BL wall-water loss", C_BMM_TOTAL, "-."),
+        ("qchamber_bl_evap", "BL liquid → vapour", C_ICE, ":"),
     ]
     any_loss = False
-    for name, label in loss_fields:
+    for name, label, colour, linestyle in loss_fields:
         if name in model:
-            ax[6].plot(model["time"] / 60.0, np.asarray(model[name]) * 1.0e3, label=label)
+            ax[6].plot(
+                model["time"] / 60.0, np.asarray(model[name]) * 1.0e3,
+                color=colour, linestyle=linestyle, linewidth=1.8, label=label,
+            )
             any_loss = True
-    ax[6].set_ylabel(r"Cumulative BL / particle-water diagnostic (g kg$^{-1}$)")
-    if any_loss: ax[6].legend()
-    ax[6].grid()
-    # Summary panel
+    ax[6].set_title("(g) Cumulative chamber / particle-water diagnostics")
+    ax[6].set_ylabel(r"Cumulative water diagnostic (g kg$^{-1}$)")
+    if any_loss:
+        ax[6].legend(fontsize=8, loc="best")
+    ax[6].grid(alpha=0.3)
+
+    # (h) Summary panel
     ax[7].axis("off")
     sat_time = np.nan
     if cfg.INITIAL_RH_METHOD == "cloud_onset":
@@ -1631,15 +2204,27 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         f"Integral selected ql M/O: {int_ql_model:.4g} / {int_ql_obs:.4g} kg s kg-1\n"
         f"Integral total BMM ql: {int_ql_model_total:.4g} kg s kg-1"
     )
-    ax[7].text(0.02, 0.98, summary, va="top", family="monospace")
+    ax[7].set_title("(h) Comparison summary")
+    ax[7].text(0.02, 0.98, summary, va="top", family="monospace", fontsize=9)
 
     for a in ax[:7]:
-        a.axvline(onset / 60.0, color="0.5", linestyle=":", linewidth=1)
-        a.axvspan(window[0] / 60.0, window[1] / 60.0, color="0.9", alpha=0.25)
-        a.set_xlabel("Time (min)")
-    ax3i.axvline(onset / 60.0, color="0.5", linestyle=":", linewidth=1)
-    fig.suptitle(f"{exp}: BMM vs iSKYLAB observations")
-    fig.tight_layout()
+        a.axvline(
+            onset / 60.0, color="0.45", linestyle=":", linewidth=1.0,
+            label=None,
+        )
+        a.axvspan(
+            window[0] / 60.0, window[1] / 60.0,
+            color="0.85", alpha=0.18,
+        )
+        a.set_xlabel("Experiment time (min)")
+    ax3i.axvline(onset / 60.0, color="0.45", linestyle=":", linewidth=1.0)
+
+    fig.suptitle(
+        f"{exp}: BMM vs iSKYLAB observations\n"
+        "Black/grey = observations; blue/green = BMM liquid/total; orange = ice",
+        fontsize=14,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.965))
 
     # Direct WELAS/model PSD comparison on a deliberately coarser common
     # logarithmic grid.  The native WELAS grid is much finer than the number

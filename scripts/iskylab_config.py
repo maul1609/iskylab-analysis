@@ -53,11 +53,30 @@ FORCE_TEMPERATURE = True
 # move particles across saturation/activation thresholds.  Smooth the forcing
 # before it is written to the BMM, while retaining the raw observations for
 # diagnostics.  Windows are specified in seconds (not samples).
+# Recommended starting configuration for chamber-forcing smoothing.
+# Add these to iskylab_config.py.
 SMOOTH_CHAMBER_FORCING = True
-CHAMBER_SMOOTH_TEMP_WINDOW = 21.0       # s, gas temperature
-CHAMBER_SMOOTH_WALL_TEMP_WINDOW = 21.0  # s, wall temperature
-CHAMBER_SMOOTH_PRESSURE_WINDOW = 21.0   # s
+
+# "raw", "savgol", or "butterworth"
+CHAMBER_SMOOTH_METHOD = "butterworth"
+
+# Robust isolated-spike removal before either smoother.
+CHAMBER_DESPIKE = True
+CHAMBER_DESPIKE_WINDOW = 10.0       # seconds
+CHAMBER_DESPIKE_NSIGMA = 2.0
+
+# Physical smoothing timescales.
+# Savitzky-Golay: fitting-window duration.
+# Butterworth: -3 dB cutoff period.
+CHAMBER_SMOOTH_TEMP_WINDOW = 30.0       # gas temperature, seconds
+CHAMBER_SMOOTH_WALL_TEMP_WINDOW = 45.0  # wall-gas delta T, seconds
+CHAMBER_SMOOTH_PRESSURE_WINDOW = 15.0   # pressure, seconds
+
 CHAMBER_SMOOTH_POLYORDER = 2
+CHAMBER_BUTTERWORTH_ORDER = 2
+
+# Recommended: preserve the physically important wall-minus-gas contrast.
+CHAMBER_SMOOTH_WALL_AS_DELTA_T = True
 
 # Write one diagnostic PNG per experiment plus a CSV summary of the smoothing
 # corrections under /tmp/$USER/forcing_smoothing.
@@ -92,7 +111,11 @@ INITIAL_RH_METHOD = "cloud_onset"
 # absolute overrides take precedence.  Values are seconds from the experiment
 # time origin, e.g. {"Exp005": 6.6*60.0}.
 MODEL_SATURATION_TIME_SHIFT_S = 0.0
-MODEL_SATURATION_TIME_OVERRIDES_S = {'Exp006': 12. * 60.0,'Exp025': 9.75 * 60.0}
+MODEL_SATURATION_TIME_OVERRIDES_S = {'Exp005': 8. * 60.0, \
+	'Exp006': 12. * 60.0,'Exp026': 10 * 60.0, \
+	'Exp007': 12.5 * 60.0,'Exp008': 13. * 60.0,'Exp009': 12. * 60.0, \
+	'Exp010': 11. * 60.0,'Exp011': 12.5 * 60.0 , \
+	'Exp014': 11. * 60.0,'Exp019': 13. * 60.0}
 
 # Aerosol number normalisation:
 #   "t0"          : CPC concentration at t=0.  Recommended when modelling
@@ -121,9 +144,25 @@ AEROSOL_INIT_TIME = "cloud_onset"
 #   ALPHA_T=1, OFFSET=0 : T_sens follows the measured wall temperature
 #   ALPHA_T=0, OFFSET=-0.12 : historical fixed -0.12 K BL sensitivity
 CHAMBER_BL_MIX = 1
-CHAMBER_BL_TAU = 4.0  # s, chamber-scale BL processing/recirculation timescale
-CHAMBER_BL_ALPHA_T = 0.33
-CHAMBER_BL_TEMP_OFFSET = 0.0  # K, optional unresolved BL sensible-temperature offset
+CHAMBER_BL_TAU = 10.  # s, chamber-scale BL processing/recirculation timescale
+CHAMBER_BL_ALPHA_T = 0.0
+CHAMBER_BL_TEMP_OFFSET = 0.1  # K, optional unresolved BL sensible-temperature offset
+
+
+
+
+"""
+	No fan: TAU ~ 80; ALPHA_T=1.0 (governed by the wall in quiescent conds); DT=0.0
+	Fan: TAU ~ 10; ALPHA_T=0.0 (gas / well mixed), but DT=-0.1
+	
+	Exp 17: wall is colder!!
+CHAMBER_BL_TAU = 10.  # s, chamber-scale BL processing/recirculation timescale
+CHAMBER_BL_ALPHA_T = 0.0
+CHAMBER_BL_TEMP_OFFSET = -0.6  # K, optional unresolved BL sensible-temperature 
+
+Note for Exp 21 I had to use +0.1 K... maybe something to do with colder / humidy?
+wall was warmer in this case
+"""
 
 # How thermodynamically required LIQUID evaporation is represented in the PSD:
 #   1 = homogeneous diffusional evaporation.  Every activated droplet receives
@@ -141,8 +180,8 @@ CHAMBER_BL_EVAP_MODE = 3
 # ---------------------------------------------------------------------------
 # 0=off, 1=saturating sigmoid in current particle diameter.
 CHAMBER_FAN_LOSS = 0
-CHAMBER_FAN_LOSS_KMAX = 1.5e-3 #1.5e-3      # s-1
-CHAMBER_FAN_LOSS_D50_REF = 4e-6 #10.0e-6   # m at reference RPM
+CHAMBER_FAN_LOSS_KMAX = 3.0e-3 #1.5e-3      # s-1
+CHAMBER_FAN_LOSS_D50_REF = 0.1e-6 #10.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
 CHAMBER_FAN_RPM_REF = 25000.0
@@ -176,7 +215,7 @@ SYNTHETIC_UPDRAFT = False
 # Single-experiment model/observation diagnostics
 # ---------------------------------------------------------------------------
 # Minimum OPC/model wet diameter used for cloud-drop bulk moments.
-SINGLE_COMPARE_DROP_MIN_UM = 2.0
+SINGLE_COMPARE_DROP_MIN_UM = 2.5
 
 # Liquid-water comparison used for the single-experiment ql score/lag:
 #   "above_min" : recommended instrument-equivalent comparison.  Reconstruct
