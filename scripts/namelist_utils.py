@@ -71,6 +71,31 @@ def set_array(text: str, name: str, values: Iterable[float]) -> str:
     return pattern.sub(rf"\g<indent>{name} = {value_text},", text, count=1)
 
 
+
+def set_literal_array(text: str, name: str, values) -> str:
+    """Replace a one-line array assignment with arbitrary Fortran literals.
+
+    Useful for logical and character arrays, for which :func:`set_array`'s
+    numeric formatting is inappropriate.
+    """
+    def fmt(v):
+        if isinstance(v, bool):
+            return ".true." if v else ".false."
+        if isinstance(v, str):
+            if (v.startswith("'") and v.endswith("'")) or (v.startswith('"') and v.endswith('"')):
+                return v
+            return repr(v)
+        return f"{v}"
+    value_text = ", ".join(fmt(v) for v in values)
+    pattern = re.compile(
+        rf"(?m)(?P<indent>^[ \t]*|(?<=[,])){re.escape(name)}\s*=\s*"
+        rf"[^\n]*?(?=(?:[A-Za-z_]\w*(?:\([^\n=]*?\))?\s*=)|$)"
+    )
+    matches = list(pattern.finditer(text))
+    if len(matches) != 1:
+        raise KeyError(f"Expected exactly one namelist assignment for {name}; found {len(matches)}")
+    return pattern.sub(rf"\g<indent>{name} = {value_text},", text, count=1)
+
 def replace_group(text: str, group: str, body: str) -> str:
     """Replace an entire ``&group ... /`` block.
 

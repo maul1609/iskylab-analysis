@@ -30,7 +30,6 @@ fileNamesOPC_M=[ \
 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp017-2-OPC-d-MergedW.csv'), \
 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp018-2-OPC-d-MergedW.csv'), \
 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp019-2-OPC-d-MergedW.csv'), \
-# 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp020-2-OPC-d-MergedW.csv'), \
 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp021-2-OPC-d-MergedW.csv'), \
 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp022-2-OPC-d-MergedW.csv'), \
 	str(cfg.DATA_ROOT / 'Datasets-V2/Timeseries-During-Expansion/iSKYLAB01-Exp023-2-OPC-d-MergedW.csv'), \
@@ -46,7 +45,6 @@ opcStr=['MergedOPC-Exp002','MergedOPC-Exp003','MergedOPC-Exp004','MergedOPC-Exp0
 	'MergedOPC-Exp010','MergedOPC-Exp011','MergedOPC-Exp012','MergedOPC-Exp013',\
 	'MergedOPC-Exp014','MergedOPC-Exp015','MergedOPC-Exp016','MergedOPC-Exp017',\
 	'MergedOPC-Exp018','MergedOPC-Exp019',\
-	#'MergedOPC-Exp020', 
 	'MergedOPC-Exp021',\
 	'MergedOPC-Exp022','MergedOPC-Exp023',\
 	#'MergedOPC-Exp024',

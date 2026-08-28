@@ -99,7 +99,7 @@ MODEL_SATURATION_TIME_OVERRIDES_S = {'Exp006': 9. * 60.0}
 #                   pre-cloud particle loss (fan, walls or fallout).
 #   "cloud_onset" : historical choice; constrains aerosol immediately before
 #                   activation and therefore hides any pre-cloud loss.
-AEROSOL_INIT_TIME = "cloud_onset"
+AEROSOL_INIT_TIME = "t0"
 
 # ---------------------------------------------------------------------------
 # Chamber boundary-layer treatment
@@ -117,8 +117,8 @@ CHAMBER_BL_TAU = 43.0  # s
 
 # 0: T_BL = T_gas + CHAMBER_BL_TEMP_OFFSET
 # 1: use measured wall temperature (Tww_mean) written as wall_temp_chamber(t)
-CHAMBER_BL_TEMP_MODE = 1
-CHAMBER_BL_TEMP_OFFSET = -0.32  # K, used only in mode 0
+CHAMBER_BL_TEMP_MODE = 0
+CHAMBER_BL_TEMP_OFFSET = -0.12  # K, used only in mode 0
 
 # ---------------------------------------------------------------------------
 # Drone-fan blade collection
@@ -206,3 +206,37 @@ SINGLE_MODEL_WARM_PSD_MIN_UM = 0.005
 SINGLE_MODEL_WARM_PSD_MAX_UM = 1000.0
 SINGLE_MODEL_ICE_PSD_MIN_UM = 0.1
 SINGLE_MODEL_ICE_PSD_MAX_UM = 10000.0
+
+
+# ---------------------------------------------------------------------------
+# Dust aerosol / ice-active-site settings for AIDAd Exp020-023 and Exp025-027
+# ---------------------------------------------------------------------------
+# FHH adsorption coefficients are written into the BMM namelist by component.
+# SDSA01 uses the Kumar et al. fresh natural-mineral-dust fit as a proxy; ATD03
+# uses the dry-generated Arizona Test Dust fit from Kumar et al. (2009).
+DUST_FHH = {
+    "SDSA01": {"A": 2.25, "B": 1.20},
+    "ATD03":  {"A": 0.27, "B": 0.79},
+}
+
+# BMM component category strings.  The actual ns(T) fits live in
+# bin_microphysics_module.f90, not in this Python repository.
+DUST_INP_CATEGORY = {
+    "SDSA01": "sdsa01",
+    "ATD03": "atd03",
+}
+
+# Common cumulative IASD thresholds [deg C], corresponding to 255 ... 240 K
+# at exactly 1 K spacing.  There are therefore 16 thresholds.
+INP_TEMP_C = [
+    -18.15, -19.15, -20.15, -21.15,
+    -22.15, -23.15, -24.15, -25.15,
+    -26.15, -27.15, -28.15, -29.15,
+    -30.15, -31.15, -32.15, -33.15,
+]
+
+# Dust experiments are configured as mixed-phase/ice runs and use Koop + INAS.
+# DeMott is disabled for these components so the explicit dust IASD reservoir
+# is not double counted.
+DUST_ENABLE_ICE = True
+DUST_ICE_NUCLEATION_MECH = [True, True, False, False]  # Koop, INAS, DeMott, Daily

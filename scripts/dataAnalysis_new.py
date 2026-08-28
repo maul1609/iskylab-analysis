@@ -50,7 +50,7 @@ import readMeteoCPC
 import readOPC_Merged
 import readPNSD_Mrg_new
 import svp
-from namelist_utils import read_text, replace_group, set_array, set_value, write_text
+from namelist_utils import read_text, replace_group, set_array, set_literal_array, set_value, write_text
 
 R_GAS = 8.314
 M_WATER = 18.0e-3
@@ -308,11 +308,25 @@ def _interp_at(time, values, t, *, name="series"):
     return float(np.interp(t, time[good], values[good]))
 
 
-def load_all_data():
-    """Read meteo/CPC, OPC and initial-PNSD files into one dictionary."""
+def load_all_data(experiments=None):
+    """Read only the requested experiments, or every configured experiment.
+
+    ``experiments`` contains canonical experiment names such as ``Exp021``.
+    This is important for single-run mode: a missing file for some unrelated
+    experiment (for example Exp020) must not prevent ``--experiment Exp021``
+    from running.
+    """
     data = {}
+    wanted = None if experiments is None else {
+        _normalise_experiment_name(exp) for exp in experiments
+    }
+
+    def _wanted(key):
+        return wanted is None or key.split("-")[-1] in wanted
 
     for i, key in enumerate(readMeteoCPC.metStr):
+        if not _wanted(key):
+            continue
         block = readMeteoCPC.readData(readThis=i, metStr=key)[key]
 
         # Preserve and smooth only the variables used as fast chamber forcing.
@@ -326,10 +340,28 @@ def load_all_data():
         data[key] = block
 
     for i, key in enumerate(readOPC_Merged.opcStr):
+        if not _wanted(key):
+            continue
         data[key] = readOPC_Merged.readData(readThis=i, opcStr=key)[key]
 
     for i, key in enumerate(readPNSD_Mrg_new.npsdStr):
+        if not _wanted(key):
+            continue
         data[key] = readPNSD_Mrg_new.readData(readThis=i, npsdStr=key)[key]
+
+    if wanted is not None:
+        for exp in wanted:
+            required = (
+                f"MeteoCPC-{exp}",
+                f"MergedOPC-{exp}",
+                f"InitialPNSD-{exp}",
+            )
+            missing = [key for key in required if key not in data]
+            if missing:
+                raise KeyError(
+                    f"{exp}: requested experiment is missing configured reader "
+                    f"entries/data for: {', '.join(missing)}"
+                )
 
     _derive_water_series(data)
     return data
@@ -344,9 +376,10 @@ def _derive_water_series(data):
     This matches the interpretation used elsewhere in this repository and
     avoids labelling dew-point vapour alone as total water.
     """
-    for key in readMeteoCPC.metStr:
+    for key, met in list(data.items()):
+        if not key.startswith("MeteoCPC-"):
+            continue
         exp = key.split("-")[-1]
-        met = data[key]
         p_pa = met["Pressure"] * 100.0
         t_k = met["Tgw mean"] + 273.15
         e = _svp_liq(met["TDew"] + 273.15)
@@ -416,6 +449,29 @@ def _model_saturation_time(exp, observed_cloud_time, runtime_time, *, cli_overri
     return target
 
 
+def _cloud_onset_for_experiment(exp, data):
+    """Return curated cloud onset, or estimate it from OPC Nd when absent."""
+    if exp in meta.CLOUD_ONSET:
+        return float(meta.CLOUD_ONSET[exp])
+    opc_key = f"MergedOPC-{exp}"
+    if opc_key not in data:
+        raise KeyError(f"No cloud-onset metadata or OPC data for {exp}")
+    opc = data[opc_key]
+    time = np.asarray(opc["Time"], dtype=float)
+    nd = np.asarray(opc["ndrop"], dtype=float)
+    good = np.isfinite(time) & np.isfinite(nd)
+    if not np.any(good):
+        raise ValueError(f"Cannot estimate cloud onset for {exp}: no finite OPC Nd")
+    peak = float(np.nanmax(nd[good]))
+    threshold = max(1.0, 0.05 * peak)
+    active = good & (nd >= threshold)
+    if not np.any(active):
+        raise ValueError(f"Cannot estimate cloud onset for {exp}: no OPC cloud signal")
+    onset = float(time[np.flatnonzero(active)[0]])
+    print(f"{exp}: no curated cloud onset; using OPC-derived onset {onset/60.0:.2f} min")
+    return onset
+
+
 def build_initial_state(data, *, saturation_time_overrides_s=None):
     """Calculate initial thermodynamics and aerosol normalisation metadata.
 
@@ -426,10 +482,11 @@ def build_initial_state(data, *, saturation_time_overrides_s=None):
     """
     states = {}
     saturation_time_overrides_s = saturation_time_overrides_s or {}
-    for exp, observed_cloud_time in meta.CLOUD_ONSET.items():
-        met_key = f"MeteoCPC-{exp}"
+    for met_key in readMeteoCPC.metStr:
+        exp = met_key.split("-")[-1]
         if met_key not in data:
             continue
+        observed_cloud_time = _cloud_onset_for_experiment(exp, data)
         met = data[met_key]
         saturation_time = _model_saturation_time(
             exp,
@@ -613,6 +670,19 @@ def _aerosol_mode_arrays(exp, state, data):
     density4[: len(density)] = density
     kappa4[: len(kappa)] = kappa
 
+    afhh4 = np.zeros(4, dtype=float)
+    bfhh4 = np.zeros(4, dtype=float)
+    inp_category4 = ["none"] * 4
+    components = list(readPNSD_Mrg_new.comp[index])
+    for j, component in enumerate(components):
+        if component in cfg.DUST_FHH:
+            # Dust adsorption is represented with FHH, not a negative-kappa
+            # sentinel.  Its IASD identity is passed separately to BMM.
+            kappa4[j] = 0.0
+            afhh4[j] = float(cfg.DUST_FHH[component]["A"])
+            bfhh4[j] = float(cfg.DUST_FHH[component]["B"])
+            inp_category4[j] = cfg.DUST_INP_CATEGORY[component]
+
     return {
         "n1": n1,
         "d1_m": d1_out_um * 1.0e-6,
@@ -622,6 +692,9 @@ def _aerosol_mode_arrays(exp, state, data):
         "sig2": sig2_out,
         "density": density4,
         "kappa": kappa4,
+        "afhh": afhh4,
+        "bfhh": bfhh4,
+        "inp_category": inp_category4,
     }
 
 
@@ -639,6 +712,12 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
     text = set_value(text, "pinit", state["initP"])
     text = set_value(text, "rhinit", state["initRH"])
     text = set_value(text, "winit", float(winit))
+    is_dust = exp in getattr(meta, "DUST_EXPERIMENTS", set())
+    if is_dust and cfg.DUST_ENABLE_ICE:
+        text = set_value(text, "ice_flag", 1)
+        text = set_literal_array(
+            text, "ice_nucleation_mech(1:4)", cfg.DUST_ICE_NUCLEATION_MECH
+        )
     text = set_value(text, "fallout_flag", bool(cfg.FALLOUT_FLAG))
     text = set_value(text, "residence_depth", float(cfg.RESIDENCE_DEPTH))
 
@@ -690,8 +769,13 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
         ("sig_aer1(1:3,2:2)", aer["sig2"]),
         ("density_core1(1:4)", aer["density"]),
         ("kappa_core1(1:4)", aer["kappa"]),
+        ("afhh_core1(1:4)", aer["afhh"]),
+        ("bfhh_core1(1:4)", aer["bfhh"]),
+        ("inp_temp(1:16)", cfg.INP_TEMP_C),
     ]:
         text = set_array(text, name, values)
+    text = set_literal_array(text, "inp_category(1:4)", aer["inp_category"])
+    text = set_value(text, "n_inp_classes", len(cfg.INP_TEMP_C))
 
     return text, aer
 
@@ -949,6 +1033,7 @@ def _observed_bulk_series(exp, data):
         # Keep the OPC file's supplied Nd as a separate diagnostic, but derive
         # all PSD-based comparison moments consistently from Conc and Dp.
         "ndrop": np.asarray(opc["ndrop"], dtype=float),
+        "nice": np.asarray(opc.get("nice", np.full_like(tobs, np.nan)), dtype=float),
         **psd,
     }
 
@@ -987,6 +1072,72 @@ def _model_bulk_moments_above(model, dmin_um):
     variance = np.zeros_like(m0)
     variance[good0] = np.maximum(m2[good0]/m0[good0] - dmean[good0]**2, 0.0)
     rel[good0] = np.sqrt(variance[good0]) / np.maximum(dmean[good0], np.finfo(float).tiny)
+    out["number_cm3"] = m0 * np.asarray(model["rhoa"]) / 1.0e6
+    out["dmean_um"] = dmean * 1.0e6
+    out["dvol_um"] = dvol * 1.0e6
+    out["deff_um"] = deff * 1.0e6
+    out["rel_disp"] = rel
+    return out
+
+
+def _model_total_hydrometeor_moments_above(model, dmin_um):
+    """Return BMM liquid+ice number/size moments above a diameter threshold.
+
+    The observed OPC/WELAS PSD in mixed-phase experiments is not phase
+    resolved.  For a like-for-like size-moment comparison, combine the BMM
+    warm distribution (nwat,dwet) and ice distribution (nicem,dmaxice) before
+    forming Dmean, Deff and relative dispersion.  Both phases use the same
+    optical-diameter lower cutoff used for the observed PSD diagnostics.
+    """
+    out = {name: np.full_like(model["time"], np.nan, dtype=float) for name in
+           ("number_cm3", "dmean_um", "dvol_um", "deff_um", "rel_disp")}
+
+    nt = len(np.asarray(model["time"]))
+    m0 = np.zeros(nt, dtype=float)
+    m1 = np.zeros(nt, dtype=float)
+    m2 = np.zeros(nt, dtype=float)
+    m3 = np.zeros(nt, dtype=float)
+    have_any = False
+    dmin = float(dmin_um) * 1.0e-6
+
+    for dkey, nkey in (("dwet", "nwat"), ("dmaxice", "nicem")):
+        if dkey not in model or nkey not in model:
+            continue
+        d = np.asarray(model[dkey], dtype=float)
+        n = np.asarray(model[nkey], dtype=float)
+        if d.shape != n.shape:
+            raise ValueError(f"{dkey}/{nkey} shape mismatch: {d.shape} vs {n.shape}")
+        if d.shape[0] != nt:
+            raise ValueError(
+                f"{dkey}/{nkey} time dimension {d.shape[0]} does not match time {nt}"
+            )
+        axes = tuple(range(1, n.ndim))
+        good = np.isfinite(d) & np.isfinite(n) & (d > dmin) & (n > 0.0)
+        w = np.where(good, n, 0.0)
+        m0 += np.sum(w, axis=axes)
+        m1 += np.sum(w * d, axis=axes)
+        m2 += np.sum(w * d**2, axis=axes)
+        m3 += np.sum(w * d**3, axis=axes)
+        have_any = True
+
+    if not have_any:
+        return out
+
+    good0 = m0 > 0.0
+    good2 = m2 > 0.0
+    dmean = np.full(nt, np.nan, dtype=float)
+    dvol = np.full(nt, np.nan, dtype=float)
+    deff = np.full(nt, np.nan, dtype=float)
+    rel = np.full(nt, np.nan, dtype=float)
+    dmean[good0] = m1[good0] / m0[good0]
+    dvol[good0] = (m3[good0] / m0[good0])**(1.0/3.0)
+    deff[good2] = m3[good2] / m2[good2]
+    variance = np.zeros(nt, dtype=float)
+    variance[good0] = np.maximum(m2[good0]/m0[good0] - dmean[good0]**2, 0.0)
+    rel[good0] = np.sqrt(variance[good0]) / np.maximum(
+        dmean[good0], np.finfo(float).tiny
+    )
+
     out["number_cm3"] = m0 * np.asarray(model["rhoa"]) / 1.0e6
     out["dmean_um"] = dmean * 1.0e6
     out["dvol_um"] = dvol * 1.0e6
@@ -1248,11 +1399,30 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
 
     nd_model = np.asarray(model["ndrop"]) * np.asarray(model["rhoa"]) / 1.0e6
     instrument_model = _model_bulk_moments_above(model, cfg.SINGLE_COMPARE_DROP_MIN_UM)
+    total_hydrometeor_model = _model_total_hydrometeor_moments_above(
+        model, cfg.SINGLE_COMPARE_DROP_MIN_UM
+    )
     nd_model_2um = instrument_model["number_cm3"]
+    # Liquid-only size moments, retained as useful phase-specific diagnostics.
     deff_model_um = instrument_model["deff_um"]
     rel_model = instrument_model["rel_disp"]
     deff_model_activated_um = np.asarray(model["deff"]) * 1.0e6
     rel_model_activated = np.asarray(model.get("rel_disp_liq", np.full_like(model["time"], np.nan)))
+    # Total liquid+ice moments are the direct comparison to the observed merged
+    # OPC/WELAS PSD once ice is present.
+    deff_model_total_um = total_hydrometeor_model["deff_um"]
+    rel_model_total = total_hydrometeor_model["rel_disp"]
+
+    # Ice bulk diagnostics for the main mixed-phase comparison panels.
+    qi_model = np.asarray(model.get("qi", np.full_like(model["time"], np.nan)), dtype=float)
+    if "nice" in model:
+        nice_model_cm3 = np.asarray(model["nice"], dtype=float) * np.asarray(model["rhoa"], dtype=float) / 1.0e6
+    elif "nicem" in model:
+        nice_native = np.asarray(model["nicem"], dtype=float)
+        nice_model_cm3 = np.sum(nice_native, axis=tuple(range(1, nice_native.ndim))) * np.asarray(model["rhoa"], dtype=float) / 1.0e6
+    else:
+        nice_model_cm3 = np.full_like(model["time"], np.nan, dtype=float)
+    nice_obs_cm3 = np.asarray(obs.get("nice", np.full_like(obs["time"], np.nan)), dtype=float)
 
     # Two deliberately different liquid-water comparisons are retained.
     # 1) total: native BMM ql versus the WELAS reader's total LWC-derived ql.
@@ -1296,8 +1466,8 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         model["time"], ql_model_above, obs["time"], ql_obs_above, window, lag=0.0
     )
     nd_score = _series_scores(model["time"], nd_model_2um, obs["time"], obs["ndrop_psd"], window)
-    deff_score = _series_scores(model["time"], deff_model_um, obs["time"], obs["deff_um"], window)
-    rel_score = _series_scores(model["time"], rel_model, obs["time"], obs["rel_disp"], window)
+    deff_score = _series_scores(model["time"], deff_model_total_um, obs["time"], obs["deff_um"], window)
+    rel_score = _series_scores(model["time"], rel_model_total, obs["time"], obs["rel_disp"], window)
 
     # Integrated liquid-water exposure is much less sensitive to a short sample-line lag than a peak.
     mt_mask = (model["time"] >= window[0]) & (model["time"] <= window[1])
@@ -1348,27 +1518,70 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         label=f"BMM WELAS-eq >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
     )
     if abs(lag) > 0.0:
+        shifted_obs_label = (
+            "WELAS total LWC" if ql_mode == "total"
+            else f"WELAS PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um"
+        )
         ax[2].plot(
             (obs["time"] - lag) / 60.0, ql_obs_compare * 1.0e3,
-            ":", alpha=0.75, label=f"selected obs shifted {-lag:+.0f}s",
+            ":", alpha=0.75,
+            label=f"{shifted_obs_label} shifted {-lag:+.0f}s",
         )
-    ax[2].set_ylabel(r"$q_l$ (g kg$^{-1}$)"); ax[2].legend(fontsize=8); ax[2].grid()
-    # Number
-    ax[3].plot(obs["time"] / 60.0, obs["ndrop"], label="OPC Nd field")
-    ax[3].plot(obs["time"] / 60.0, obs["ndrop_psd"], ":", label=f"OPC PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
-    ax[3].plot(model["time"] / 60.0, nd_model, label="BMM activated")
-    ax[3].plot(model["time"] / 60.0, nd_model_2um, "--", label=f"BMM >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
-    ax[3].set_ylabel(r"$N_d$ (cm$^{-3}$)"); ax[3].legend(fontsize=8); ax[3].grid()
-    # Effective diameter
-    ax[4].plot(obs["time"] / 60.0, obs["deff_um"], label="OPC")
-    ax[4].plot(model["time"] / 60.0, deff_model_um, label=f"BMM >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
-    ax[4].plot(model["time"] / 60.0, deff_model_activated_um, "--", alpha=0.6, label="BMM activated")
-    ax[4].set_ylabel(r"$D_{eff}$ ($\mu$m)"); ax[4].legend(); ax[4].grid()
-    # Relative dispersion
-    ax[5].plot(obs["time"] / 60.0, obs["rel_disp"], label="OPC PSD")
-    ax[5].plot(model["time"] / 60.0, rel_model, label=f"BMM >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
-    ax[5].plot(model["time"] / 60.0, rel_model_activated, "--", alpha=0.6, label="BMM activated")
-    ax[5].set_ylabel(r"Relative dispersion $\sigma_D/\bar D$"); ax[5].legend(); ax[5].grid()
+    if np.any(np.isfinite(qi_model)):
+        ax[2].plot(
+            model["time"] / 60.0, qi_model * 1.0e3, "-.",
+            label="BMM ice water qi",
+        )
+    ax[2].set_ylabel(r"Water mixing ratio (g kg$^{-1}$)"); ax[2].legend(fontsize=8); ax[2].grid()
+    # Number: liquid/drop number on the left axis and ice-crystal number on a
+    # secondary right axis so the often much smaller Ni remains visible.
+    ax[3].plot(obs["time"] / 60.0, obs["ndrop"], label="WELAS Nd field")
+    ax[3].plot(obs["time"] / 60.0, obs["ndrop_psd"], ":", label=f"WELAS merged PSD >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
+    ax[3].plot(model["time"] / 60.0, nd_model, label="BMM activated liquid")
+    ax[3].plot(model["time"] / 60.0, nd_model_2um, "--", label=f"BMM liquid >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um")
+    ax[3].set_ylabel(r"$N_d$ (cm$^{-3}$)")
+    ax3i = ax[3].twinx()
+    if np.any(np.isfinite(nice_obs_cm3)):
+        ax3i.plot(obs["time"] / 60.0, nice_obs_cm3, "-.", label="WELAS Ni")
+    if np.any(np.isfinite(nice_model_cm3)):
+        ax3i.plot(model["time"] / 60.0, nice_model_cm3, ":", label="BMM Ni")
+    ax3i.set_ylabel(r"$N_i$ (cm$^{-3}$)")
+    h1, l1 = ax[3].get_legend_handles_labels()
+    h2, l2 = ax3i.get_legend_handles_labels()
+    ax[3].legend(h1 + h2, l1 + l2, fontsize=8, loc="best")
+    ax[3].grid()
+    # Effective diameter.  The observed merged OPC/WELAS PSD can contain both
+    # liquid and ice, so show a total BMM liquid+ice moment as the primary
+    # comparison while retaining the liquid-only diagnostics.
+    ax[4].plot(obs["time"] / 60.0, obs["deff_um"], label="OPC/WELAS total PSD")
+    ax[4].plot(
+        model["time"] / 60.0, deff_model_total_um,
+        label=f"BMM total (liq+ice) >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+    )
+    ax[4].plot(
+        model["time"] / 60.0, deff_model_um, "--", alpha=0.75,
+        label=f"BMM liquid >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+    )
+    ax[4].plot(
+        model["time"] / 60.0, deff_model_activated_um, ":", alpha=0.6,
+        label="BMM activated liquid",
+    )
+    ax[4].set_ylabel(r"$D_{eff}$ ($\mu$m)"); ax[4].legend(fontsize=8); ax[4].grid()
+    # Relative dispersion: same total-vs-liquid distinction as Deff.
+    ax[5].plot(obs["time"] / 60.0, obs["rel_disp"], label="OPC/WELAS total PSD")
+    ax[5].plot(
+        model["time"] / 60.0, rel_model_total,
+        label=f"BMM total (liq+ice) >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+    )
+    ax[5].plot(
+        model["time"] / 60.0, rel_model, "--", alpha=0.75,
+        label=f"BMM liquid >{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um",
+    )
+    ax[5].plot(
+        model["time"] / 60.0, rel_model_activated, ":", alpha=0.6,
+        label="BMM activated liquid",
+    )
+    ax[5].set_ylabel(r"Relative dispersion $\sigma_D/\bar D$"); ax[5].legend(fontsize=8); ax[5].grid()
     # Cumulative chamber/fallout losses
     loss_fields = [
         ("qfan_liq", "fan"), ("qwall_liq", "wall"),
@@ -1408,8 +1621,8 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         f"total ql NRMSE: {ql_total_abs['nrmse']:.3f}\n"
         f">{cfg.SINGLE_COMPARE_DROP_MIN_UM:g}um ql NRMSE: {ql_above_abs['nrmse']:.3f}\n"
         f"Nd(>{cfg.SINGLE_COMPARE_DROP_MIN_UM:g} um) NRMSE: {nd_score['nrmse']:.3f}\n"
-        f"Deff NRMSE: {deff_score['nrmse']:.3f}\n"
-        f"Rel. dispersion NRMSE: {rel_score['nrmse']:.3f}\n"
+        f"Total Deff NRMSE: {deff_score['nrmse']:.3f}\n"
+        f"Total rel. dispersion NRMSE: {rel_score['nrmse']:.3f}\n"
         f"Integral selected ql M/O: {int_ql_model:.4g} / {int_ql_obs:.4g} kg s kg-1\n"
         f"Integral total BMM ql: {int_ql_model_total:.4g} kg s kg-1"
     )
@@ -1419,6 +1632,7 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         a.axvline(onset / 60.0, color="0.5", linestyle=":", linewidth=1)
         a.axvspan(window[0] / 60.0, window[1] / 60.0, color="0.9", alpha=0.25)
         a.set_xlabel("Time (min)")
+    ax3i.axvline(onset / 60.0, color="0.5", linestyle=":", linewidth=1)
     fig.suptitle(f"{exp}: BMM vs iSKYLAB observations")
     fig.tight_layout()
 
@@ -1430,9 +1644,18 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
     obs_psd_compare = _rebin_dndlog10d(
         obs["psd"], obs["Dp_edges_um"], compare_edges
     )
-    model_psd = _model_psd_on_fixed_grid(
+    model_psd_liq = _model_psd_on_fixed_grid(
         model, compare_edges, diameter_key="dwet", number_key="nwat"
     )
+    model_psd_ice = _model_psd_on_fixed_grid(
+        model, compare_edges, diameter_key="dmaxice", number_key="nicem"
+    )
+    if model_psd_liq is None:
+        model_psd = model_psd_ice
+    elif model_psd_ice is None:
+        model_psd = model_psd_liq
+    else:
+        model_psd = model_psd_liq + model_psd_ice
     psd_fig = None
     if model_psd is not None:
         psd_fig, pax = plt.subplots(2, 1, figsize=(13, 9), sharex=True, sharey=True)
@@ -1465,7 +1688,7 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
             a.set_xlim(xmin, xmax)
             
         pax[1].set_title(
-            f"BMM rebinned to the same {len(compare_edges)-1} log-D bins"
+            f"BMM liquid + ice rebinned to the same {len(compare_edges)-1} log-D bins"
         )
         for a in pax:
             a.set_yscale("log")
@@ -1474,8 +1697,8 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         pax[1].set_xlabel("Time (min)")
         psd_fig.colorbar(pcm1, ax=pax, label=r"dN/dlog$_{10}$D (cm$^{-3}$)")
         psd_fig.suptitle(
-            f"{exp}: observed and model liquid/warm-particle size distributions "
-            "(common coarse grid)"
+            f"{exp}: observed merged and BMM liquid+ice size distributions "
+            "(common coarse grid; BMM ice uses Dmax)"
         )
 
     # Model-only full PSD diagnostic.  The warm panel includes every nwat
@@ -1585,10 +1808,20 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
          experiment=None, winit_single=1.3, saturation_time_min=None):
     if not READ_DATA:
         raise RuntimeError("READ_DATA=False is no longer supported without supplying a cached data dictionary")
-    data = load_all_data()
+
+    # Resolve the requested target *before* reading data.  Single-experiment
+    # mode should never attempt to open files belonging to unrelated cases.
+    exp = _normalise_experiment_name(experiment) if experiment is not None else None
+    if exp is not None:
+        requested_experiments = [exp]
+    else:
+        if group < 0 or group >= len(meta.BATCH_GROUPS):
+            raise ValueError(f"group must be between 0 and {len(meta.BATCH_GROUPS)-1}")
+        requested_experiments = meta.BATCH_GROUPS[group]
+
+    data = load_all_data(requested_experiments)
     _write_forcing_smoothing_diagnostics(data)
 
-    exp = _normalise_experiment_name(experiment) if experiment is not None else None
     if saturation_time_min is not None and exp is None:
         raise ValueError("--saturation-time-min is only valid with --experiment")
     if saturation_time_min is not None and cfg.INITIAL_RH_METHOD != "cloud_onset":
@@ -1616,8 +1849,6 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
             )
         return model_file
 
-    if group < 0 or group >= len(meta.BATCH_GROUPS):
-        raise ValueError(f"group must be between 0 and {len(meta.BATCH_GROUPS)-1}")
     batch_sims = meta.BATCH_GROUPS[group]
     winit = meta.GROUP_UPDRAFT[group]
 

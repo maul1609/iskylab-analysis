@@ -66,8 +66,10 @@ BATCH_GROUPS = [
     ["Exp013", "Exp014"],
     ["Exp016", "Exp017"],
     ["Exp015", "Exp019"],
+    ["Exp021", "Exp022", "Exp023"],  # SDSA01 +/- NaCl
+    ["Exp025", "Exp026", "Exp027"],             # ATD03 +/- NaCl
 ]
-GROUP_TYPE = [2, 2, 2, 1, 1, 1, 2]
+GROUP_TYPE = [2, 2, 2, 1, 1, 1, 2, 1, 1]
 GROUP_UPDRAFT = [
     [1.3, 1.3, 1.3],
     [1.3, 1.3, 1.3],
@@ -76,4 +78,21 @@ GROUP_UPDRAFT = [
     [1.3, 1.3],
     [1.3, 10.4],
     [1.3, 1.3],
+    [1.3, 1.3, 1.3],
+    [1.3, 1.3, 1.3],
 ]
+
+
+# Nominal injected aerosol targets supplied for the dust experiments [cm-3].
+# These are metadata only; the BMM initial number is still normalised from the
+# measured CPC/PNSD data by dataAnalysis_new.py.
+DUST_TARGETS_CM3 = {
+    "Exp021": {"SDSA01": 1000.0},
+    "Exp022": {"SDSA01": 3000.0, "NaCl": 2000.0},
+    "Exp023": {"SDSA01": 3000.0, "NaCl": 2000.0},
+    "Exp025": {"ATD03": 1000.0},
+    "Exp026": {"ATD03": 1000.0, "NaCl": 4000.0},
+    "Exp027": {"ATD03": 1000.0, "NaCl": 4000.0},
+}
+
+DUST_EXPERIMENTS = set(DUST_TARGETS_CM3)
