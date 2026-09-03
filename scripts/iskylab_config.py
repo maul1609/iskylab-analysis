@@ -146,9 +146,12 @@ AEROSOL_INIT_TIME = "cloud_onset"
 CHAMBER_BL_MIX = 1
 CHAMBER_BL_TAU = 10.  # s, chamber-scale BL processing/recirculation timescale
 CHAMBER_BL_ALPHA_T = 0.0
-CHAMBER_BL_TEMP_OFFSET = 0.1  # K, optional unresolved BL sensible-temperature offset
+CHAMBER_BL_TEMP_OFFSET = -0.075  # K, optional unresolved BL sensible-temperature offset
+#CHAMBER_BL_TEMP_OFFSET = 0.09  # K, optional unresolved BL sensible-temperature offset
 
-
+# CHAMBER_BL_TAU = 50.  # s, chamber-scale BL processing/recirculation timescale
+# CHAMBER_BL_ALPHA_T = 0.0
+#CHAMBER_BL_TEMP_OFFSET=5.0
 
 
 """
@@ -180,8 +183,8 @@ CHAMBER_BL_EVAP_MODE = 3
 # ---------------------------------------------------------------------------
 # 0=off, 1=saturating sigmoid in current particle diameter.
 CHAMBER_FAN_LOSS = 0
-CHAMBER_FAN_LOSS_KMAX = 3.0e-3 #1.5e-3      # s-1
-CHAMBER_FAN_LOSS_D50_REF = 0.1e-6 #10.0e-6   # m at reference RPM
+CHAMBER_FAN_LOSS_KMAX = 7.0e-3 #1.5e-3      # s-1
+CHAMBER_FAN_LOSS_D50_REF = 6e-6 #10.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
 CHAMBER_FAN_RPM_REF = 25000.0

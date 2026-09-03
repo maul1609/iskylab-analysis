@@ -28,8 +28,17 @@ Important implementation notes
   relative dispersion and the full OPC size distribution.  WELAS and native
   BMM moving particles are conservatively rebinned onto a configurable common
   coarse log-D grid for a readable like-for-like PSD comparison.
-* ``--saturation-time-min`` can move the model saturation target for a single
-  run without moving the observed cloud-onset marker or comparison window.
+* ``--cloud-formation-time-min`` (alias ``--saturation-time-min``) can move the
+  model saturation target for a single run without moving the raw observed
+  cloud timing.
+* ``--shift-cloud-measurements`` optionally applies the diagnosed WELAS/BMM ql
+  lag to the complete WELAS time coordinate, so liquid water, number, Deff,
+  dispersion, ice number and the full observed PSD are shifted consistently.
+* ``--bl-tau-s`` and ``--bl-temp-offset-k`` override the chamber BL mixing
+  timescale and sensible-temperature offset for a run without editing config.
+* ``--sce-bins``/``--scebins`` creates a temporary copy of ``sce/namelist.in``,
+  changes ``n_binsc`` only in that copy, and points the generated BMM namelist
+  ``scefile`` at it.  The repository SCE namelist is never modified.
 """
 
 from __future__ import annotations
@@ -1039,8 +1048,14 @@ def _aerosol_mode_arrays(exp, state, data):
     }
 
 
-def make_namelist(exp, state, data, output_file, *, winit=1.3):
-    """Return a complete BMM namelist for one iSKYLAB experiment."""
+def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
+                  bl_tau_s=None, bl_temp_offset_k=None):
+    """Return a complete BMM namelist for one iSKYLAB experiment.
+
+    If ``scefile`` is supplied, point the main BMM namelist at that SCE
+    namelist.  This lets per-run SCE sensitivities use a temporary copy
+    without modifying the repository's ``sce/namelist.in``.
+    """
     text = read_text(cfg.BMM_TEMPLATE)
     met = data[f"MeteoCPC-{exp}"]
     n = len(met["Time"])
@@ -1053,6 +1068,8 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
     text = set_value(text, "pinit", state["initP"])
     text = set_value(text, "rhinit", state["initRH"])
     text = set_value(text, "winit", float(winit))
+    if scefile is not None:
+        text = set_value(text, "scefile", str(scefile))
     is_dust = exp in getattr(meta, "DUST_EXPERIMENTS", set())
     if is_dust and cfg.DUST_ENABLE_ICE:
         text = set_value(text, "ice_flag", 1)
@@ -1083,10 +1100,13 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
         "chamber_force_temperature": force_t,
         "chamber_force_qtot": force_q,
         "chamber_bl_mix": bl_mix,
-        "chamber_bl_tau": cfg.CHAMBER_BL_TAU,
+        "chamber_bl_tau": (cfg.CHAMBER_BL_TAU if bl_tau_s is None else float(bl_tau_s)),
         "chamber_bl_alpha_t": cfg.CHAMBER_BL_ALPHA_T,
         "chamber_bl_evap_mode": cfg.CHAMBER_BL_EVAP_MODE,
-        "chamber_bl_temp_offset": cfg.CHAMBER_BL_TEMP_OFFSET,
+        "chamber_bl_temp_offset": (
+            cfg.CHAMBER_BL_TEMP_OFFSET
+            if bl_temp_offset_k is None else float(bl_temp_offset_k)
+        ),
         "chamber_fan_loss": fan_loss,
         "chamber_fan_loss_kmax": cfg.CHAMBER_FAN_LOSS_KMAX,
         "chamber_fan_loss_d50_ref": cfg.CHAMBER_FAN_LOSS_D50_REF,
@@ -1124,7 +1144,47 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3):
     return text, aer
 
 
-def run_batch(batch_sims, states, data, winit):
+def _make_temp_sce_namelist(sce_bins, tmpdir):
+    """Create a temporary SCE namelist with an optional ``n_binsc`` override.
+
+    The repository copy of ``sce/namelist.in`` is never modified.  When
+    ``sce_bins`` is supplied, the base SCE namelist is copied into ``tmpdir``,
+    ``n_binsc`` is changed in the copy, and the returned path should be written
+    into the main BMM namelist via its ``scefile`` variable.
+
+    If ``sce_bins`` is None, return None so the main BMM template keeps its
+    existing ``scefile`` setting unchanged.
+    """
+    if sce_bins is None:
+        return None
+
+    sce_bins = int(sce_bins)
+    if sce_bins < 0:
+        raise ValueError("sce_bins must be >= 0")
+
+    source = Path(
+        getattr(cfg, "SCE_NAMELIST", cfg.BMM_MODEL_FOLDER / "sce" / "namelist.in")
+    )
+    if not source.exists():
+        raise FileNotFoundError(f"BMM SCE namelist not found: {source}")
+
+    tmpdir = Path(tmpdir)
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    target = tmpdir / f"sce-namelist-nbinsc{sce_bins}.in"
+
+    text = read_text(source)
+    text = set_value(text, "n_binsc", sce_bins)
+    write_text(target, text)
+
+    print(
+        f"Temporary SCE namelist: n_binsc={sce_bins}; "
+        f"source={source}; run copy={target}"
+    )
+    return target
+
+
+def run_batch(batch_sims, states, data, winit, *, sce_bins=None,
+              bl_tau_s=None, bl_temp_offset_k=None):
     """Generate namelists, run the BMM and return aerosol mode totals."""
     cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     if not cfg.BMM_EXECUTABLE.exists():
@@ -1137,10 +1197,13 @@ def run_batch(batch_sims, states, data, winit):
 
     with tempfile.TemporaryDirectory(prefix="iskylab_bmm_") as tmpdir:
         tmpdir = Path(tmpdir)
+        scefile = _make_temp_sce_namelist(sce_bins, tmpdir)
         for nn, exp in enumerate(batch_sims):
             output_file = cfg.OUTPUT_ROOT / f"output{nn:03d}.nc"
             namelist_text, aer = make_namelist(
-                exp, states[exp], data, output_file, winit=winit[nn]
+                exp, states[exp], data, output_file, winit=winit[nn],
+                scefile=scefile, bl_tau_s=bl_tau_s,
+                bl_temp_offset_k=bl_temp_offset_k,
             )
             namelist_file = tmpdir / f"namelist-{exp}.in"
             write_text(namelist_file, namelist_text)
@@ -1828,7 +1891,8 @@ def _series_scores(model_time, model_values, obs_time, obs_values, window, lag=0
     }
 
 
-def run_single_experiment(exp, state, data, *, winit=1.3):
+def run_single_experiment(exp, state, data, *, winit=1.3, sce_bins=None,
+                          bl_tau_s=None, bl_temp_offset_k=None):
     """Generate and run one named experiment, retaining its namelist and output."""
     cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     outdir = cfg.OUTPUT_ROOT / "single_comparison"
@@ -1836,17 +1900,33 @@ def run_single_experiment(exp, state, data, *, winit=1.3):
     if not cfg.BMM_EXECUTABLE.exists():
         raise FileNotFoundError(f"BMM executable not found: {cfg.BMM_EXECUTABLE}")
     output_file = outdir / f"output-{exp}.nc"
-    namelist_text, _ = make_namelist(exp, state, data, output_file, winit=winit)
-    namelist_file = outdir / f"namelist-{exp}.in"
-    write_text(namelist_file, namelist_text)
-    print(f"Single run: {exp} -> {output_file}")
-    completed = subprocess.run(
-        [str(cfg.BMM_EXECUTABLE), str(namelist_file)],
-        cwd=cfg.BMM_MODEL_FOLDER,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
+
+    # Keep both the temporary SCE override and the main run namelist alive for
+    # the duration of main.exe.  The repository SCE namelist is untouched.
+    with tempfile.TemporaryDirectory(prefix="iskylab_bmm_single_") as tmpdir:
+        tmpdir = Path(tmpdir)
+        scefile = _make_temp_sce_namelist(sce_bins, tmpdir)
+        namelist_text, _ = make_namelist(
+            exp, state, data, output_file, winit=winit, scefile=scefile,
+            bl_tau_s=bl_tau_s, bl_temp_offset_k=bl_temp_offset_k,
+        )
+        run_namelist = tmpdir / f"namelist-{exp}.in"
+        write_text(run_namelist, namelist_text)
+
+        # Retain the generated main namelist for provenance.  Note that when
+        # --sce-bins is used its scefile path is intentionally a temporary run
+        # path and is not intended for a later manual rerun.
+        namelist_file = outdir / f"namelist-{exp}.in"
+        write_text(namelist_file, namelist_text)
+
+        print(f"Single run: {exp} -> {output_file}")
+        completed = subprocess.run(
+            [str(cfg.BMM_EXECUTABLE), str(run_namelist)],
+            cwd=cfg.BMM_MODEL_FOLDER,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
     if completed.stdout.strip():
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
     if completed.stderr.strip():
@@ -1854,7 +1934,9 @@ def run_single_experiment(exp, state, data, *, winit=1.3):
     return output_file
 
 
-def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_time_s=None):
+def analyse_single_experiment(exp, data, model_file, *, show=True,
+                              saturation_time_s=None,
+                              shift_cloud_measurements=False):
     """Create time-series and PSD model/observation diagnostics for one experiment."""
     import readModel
     from matplotlib.colors import LogNorm
@@ -1918,14 +2000,33 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
             f"{cfg.SINGLE_COMPARE_QL_MODE!r}"
         )
 
-    lag, lag_corr = _best_ql_lag(
+    # Diagnose the WELAS/sample-line lag from the selected liquid-water series.
+    # Positive lag means the observation occurs later than the model.  When
+    # requested, shift the *single observed time coordinate* by -lag.  Every
+    # WELAS-derived quantity (ql, number, Deff, dispersion, ice number and PSD)
+    # then follows automatically and consistently.
+    diagnosed_lag, lag_corr = _best_ql_lag(
         model["time"], ql_model_compare, obs["time"], ql_obs_compare, window
     )
+    applied_obs_shift_s = -diagnosed_lag if shift_cloud_measurements else 0.0
+    if shift_cloud_measurements and abs(applied_obs_shift_s) > 0.0:
+        obs["time"] = np.asarray(obs["time"], dtype=float) + applied_obs_shift_s
+        window = np.asarray(window, dtype=float) + applied_obs_shift_s
+        onset = float(onset) + applied_obs_shift_s
+        print(
+            f"{exp}: shifted all WELAS cloud measurements by "
+            f"{applied_obs_shift_s:+.1f} s (diagnosed ql lag "
+            f"{diagnosed_lag:+.1f} s)"
+        )
+
     ql_abs = _series_scores(
         model["time"], ql_model_compare, obs["time"], ql_obs_compare, window, lag=0.0
     )
+    # Keep the historical lagged score for diagnostics.  If the complete WELAS
+    # record has already been shifted, no additional lag is applied here.
     ql_lag = _series_scores(
-        model["time"], ql_model_compare, obs["time"], ql_obs_compare, window, lag=lag
+        model["time"], ql_model_compare, obs["time"], ql_obs_compare, window,
+        lag=0.0 if shift_cloud_measurements else diagnosed_lag
     )
     ql_total_abs = _series_scores(
         model["time"], ql_model_total, obs["time"], ql_obs_total, window, lag=0.0
@@ -2031,16 +2132,10 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         alpha=1.0 if above_selected else 0.75,
         label=f"BMM WELAS-equivalent liquid water, D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm",
     )
-    if abs(lag) > 0.0:
-        shifted_obs_label = (
-            "iSKYLAB/WELAS total liquid water" if ql_mode == "total"
-            else f"iSKYLAB/WELAS D > {cfg.SINGLE_COMPARE_DROP_MIN_UM:g} µm"
-        )
-        ax[2].plot(
-            (obs["time"] - lag) / 60.0, ql_obs_compare * 1.0e3,
-            color=C_FORCING, linestyle=":", linewidth=1.5, alpha=0.9,
-            label=f"{shifted_obs_label}, time-shifted {-lag:+.0f} s",
-        )
+    # No shifted comparison curve is drawn by default.  The diagnosed lag is
+    # reported numerically only.  When --shift-cloud-measurements is supplied,
+    # obs["time"] itself has already been shifted above, so every WELAS-derived
+    # quantity is plotted consistently on the shifted time coordinate.
     if np.any(np.isfinite(qi_model)):
         ax[2].plot(
             model["time"] / 60.0, qi_model * 1.0e3,
@@ -2193,7 +2288,11 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         f"Observed onset marker: {onset/60:.2f} min\n"
         f"Model saturation target: {sat_label}\n"
         f"ql comparison: {ql_mode_label}\n"
-        f"Diagnostic ql lag: {lag:+.0f} s (corr={lag_corr:.3f})\n"
+        f"Diagnostic ql lag (not automatically applied): {diagnosed_lag:+.0f} s "
+        f"(corr={lag_corr:.3f})\n"
+        f"Applied WELAS time shift: {applied_obs_shift_s:+.0f} s "
+        f"({'ON' if shift_cloud_measurements else 'OFF'})\n"
+        f"Applied WELAS shift: {applied_obs_shift_s:+.0f} s\n"
         f"selected ql NRMSE: {ql_abs['nrmse']:.3f}\n"
         f"selected ql NRMSE lagged: {ql_lag['nrmse']:.3f}\n"
         f"total ql NRMSE: {ql_total_abs['nrmse']:.3f}\n"
@@ -2249,13 +2348,19 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
     psd_fig = None
     if model_psd is not None:
         psd_fig, pax = plt.subplots(2, 1, figsize=(13, 9), sharex=True, sharey=True)
-        positive = np.concatenate([
-            obs_psd_compare[np.isfinite(obs_psd_compare) & (obs_psd_compare > 0.0)],
-            model_psd[np.isfinite(model_psd) & (model_psd > 0.0)],
-        ])
-        if positive.size:
-            vmin = max(float(np.nanpercentile(positive, 2.0)), 1.0e-4)
-            vmax = max(float(np.nanpercentile(positive, 99.5)), 10.0 * vmin)
+        # Use the observed WELAS concentration range to define the shared
+        # logarithmic colour scale.  The model therefore cannot stretch or
+        # compress the colour limits; identical colours in the two panels
+        # correspond to identical dN/dlog10D values on the observational scale.
+        welas_positive = obs_psd_compare[
+            np.isfinite(obs_psd_compare) & (obs_psd_compare > 0.0)
+        ]
+        if welas_positive.size:
+            vmin = max(float(np.nanpercentile(welas_positive, 2.0)), 1.0e-4)
+            vmax = max(
+                float(np.nanpercentile(welas_positive, 99.5)),
+                10.0 * vmin,
+            )
         else:
             vmin, vmax = 1.0e-4, 1.0
         norm = LogNorm(vmin=vmin, vmax=vmax)
@@ -2364,7 +2469,8 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
         "window_start_s": window[0], "window_end_s": window[1],
         "model_saturation_target_s": sat_time,
         "ql_compare_mode": ql_mode,
-        "best_ql_lag_s": lag, "best_ql_lag_corr": lag_corr,
+        "best_ql_lag_s": diagnosed_lag, "best_ql_lag_corr": lag_corr,
+        "applied_welas_time_shift_s": applied_obs_shift_s,
         "ql_nrmse_absolute": ql_abs["nrmse"], "ql_nrmse_lagged": ql_lag["nrmse"],
         "ql_total_nrmse_absolute": ql_total_abs["nrmse"],
         "ql_above_min_nrmse_absolute": ql_above_abs["nrmse"],
@@ -2395,7 +2501,8 @@ def analyse_single_experiment(exp, data, model_file, *, show=True, saturation_ti
     return fig, psd_fig, full_psd_fig, metrics
 
 def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=DO_PLOT,
-         experiment=None, winit_single=1.3, saturation_time_min=None):
+         experiment=None, winit_single=1.3, saturation_time_min=None, sce_bins=None,
+         shift_cloud_measurements=False, bl_tau_s=None, bl_temp_offset_k=None):
     if not READ_DATA:
         raise RuntimeError("READ_DATA=False is no longer supported without supplying a cached data dictionary")
 
@@ -2413,10 +2520,14 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
     _write_forcing_smoothing_diagnostics(data)
 
     if saturation_time_min is not None and exp is None:
-        raise ValueError("--saturation-time-min is only valid with --experiment")
+        raise ValueError("--cloud-formation-time-min/--saturation-time-min is only valid with --experiment")
+    if shift_cloud_measurements and exp is None:
+        raise ValueError("--shift-cloud-measurements is currently only valid with --experiment")
+    if bl_tau_s is not None and float(bl_tau_s) <= 0.0:
+        raise ValueError("--bl-tau-s must be > 0")
     if saturation_time_min is not None and cfg.INITIAL_RH_METHOD != "cloud_onset":
         raise ValueError(
-            "--saturation-time-min requires INITIAL_RH_METHOD='cloud_onset'; "
+            "--cloud-formation-time-min/--saturation-time-min requires INITIAL_RH_METHOD='cloud_onset'; "
             "it has no effect with dewpoint initialisation"
         )
     saturation_overrides = {}
@@ -2429,13 +2540,17 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
             raise KeyError(f"No initial-state metadata/data available for {exp}")
         model_file = cfg.OUTPUT_ROOT / "single_comparison" / f"output-{exp}.nc"
         if run_model:
-            model_file = run_single_experiment(exp, states[exp], data, winit=winit_single)
+            model_file = run_single_experiment(
+                exp, states[exp], data, winit=winit_single, sce_bins=sce_bins,
+                bl_tau_s=bl_tau_s, bl_temp_offset_k=bl_temp_offset_k,
+            )
         elif not model_file.exists():
             raise FileNotFoundError(f"Existing single-run output not found: {model_file}")
         if do_analysis:
             return analyse_single_experiment(
                 exp, data, model_file, show=do_plot,
                 saturation_time_s=states[exp]["saturation_time"],
+                shift_cloud_measurements=shift_cloud_measurements,
             )
         return model_file
 
@@ -2444,7 +2559,10 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
 
     vals1 = vals2 = None
     if run_model:
-        vals1, vals2 = run_batch(batch_sims, states, data, winit)
+        vals1, vals2 = run_batch(
+            batch_sims, states, data, winit, sce_bins=sce_bins,
+            bl_tau_s=bl_tau_s, bl_temp_offset_k=bl_temp_offset_k,
+        )
 
     if do_analysis:
         if vals1 is None or vals2 is None:
@@ -2467,13 +2585,53 @@ if __name__ == "__main__":
     target.add_argument("--experiment", help="single experiment, e.g. Exp005 or 5")
     parser.add_argument("--winit", type=float, default=1.3, help="initial/updraft value used for a single run")
     parser.add_argument(
-        "--saturation-time-min",
+        "--cloud-formation-time-min", "--saturation-time-min",
+        dest="saturation_time_min",
         type=float,
         default=None,
         help=(
-            "single-run model saturation target in minutes from experiment start; "
-            "overrides the config/default CLOUD_ONSET target without moving the "
-            "observed onset marker or comparison window"
+            "single-run model cloud/saturation target in minutes from experiment "
+            "start; sets the initial vapour amount so the measured P/T trajectory "
+            "would reach liquid saturation at this time in the absence of water "
+            "exchange. The observed WELAS timing is not moved."
+        ),
+    )
+    parser.add_argument(
+        "--shift-cloud-measurements",
+        action="store_true",
+        help=(
+            "shift the complete WELAS observation time coordinate by the diagnosed "
+            "ql lag before comparison; applies consistently to ql, number, Deff, "
+            "dispersion, ice number and the full observed PSD (default: off)"
+        ),
+    )
+    parser.add_argument(
+        "--bl-tau-s",
+        type=float,
+        default=None,
+        help=(
+            "override chamber_bl_tau (s) in generated BMM namelists for this run; "
+            "if omitted use iskylab_config.CHAMBER_BL_TAU"
+        ),
+    )
+    parser.add_argument(
+        "--bl-temp-offset-k",
+        type=float,
+        default=None,
+        help=(
+            "override chamber_bl_temp_offset (K) in generated BMM namelists for "
+            "this run; if omitted use iskylab_config.CHAMBER_BL_TEMP_OFFSET"
+        ),
+    )
+    parser.add_argument(
+        "--sce-bins", "--scebins",
+        dest="sce_bins",
+        type=int,
+        default=None,
+        help=(
+            "set n_binsc in a temporary copy of BMM_MODEL_FOLDER/sce/namelist.in "
+            "and point the generated BMM namelist scefile at that copy; "
+            "the repository SCE namelist is never modified"
         ),
     )
     parser.add_argument("--no-run", action="store_true", help="analyse existing output without running BMM")
@@ -2486,6 +2644,10 @@ if __name__ == "__main__":
         experiment=args.experiment,
         winit_single=args.winit,
         saturation_time_min=args.saturation_time_min,
+        sce_bins=args.sce_bins,
+        shift_cloud_measurements=args.shift_cloud_measurements,
+        bl_tau_s=args.bl_tau_s,
+        bl_temp_offset_k=args.bl_temp_offset_k,
         run_model=not args.no_run,
         do_analysis=not args.no_analysis,
         do_plot=not args.no_plot,
