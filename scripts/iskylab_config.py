@@ -105,6 +105,13 @@ QTOT_DATA_MODE = "vapour_plus_opc"
 #   "dewpoint"    : use the measured dew point at t=0 directly.
 INITIAL_RH_METHOD = "cloud_onset"
 
+# A one-off direct RH(t=0) sensitivity is normally supplied on the command line:
+#
+#     --initial-rh 0.95
+#
+# This bypasses the cloud/saturation-time inference for that run.  The value is
+# fractional water RH (0.95 = 95%).  It does not move observed cloud timing.
+
 # Model saturation-target controls used only when INITIAL_RH_METHOD is
 # "cloud_onset".  These alter the initial vapour mixing ratio; they do NOT move
 # the observed cloud-onset marker/window used in the comparison plots.
@@ -339,3 +346,13 @@ INP_TEMP_C = list(np.linspace(-18.0, -30.0, 100))
 # is not double counted.
 DUST_ENABLE_ICE = True
 DUST_ICE_NUCLEATION_MECH = [True, True, False, False]  # Koop, INAS, DeMott, Daily
+
+# IASD/INAS liquid-water eligibility.
+#
+# 0 = historical/default: require Koehler/FHH activation before IASD freezing.
+# 1 = allow IASD freezing when X = Vwater/Vdry >= IASD_XTHRESH.
+#
+# A one-off CLI value, e.g. ``--iasd-xthresh 0.04``, automatically selects
+# mode 1 for that run and overrides IASD_XTHRESH.
+IASD_WETTING_MODE = 0
+IASD_XTHRESH = 0.01

@@ -835,40 +835,58 @@ def _cloud_onset_for_experiment(exp, data):
     return onset
 
 
-def build_initial_state(data, *, saturation_time_overrides_s=None):
+def build_initial_state(
+    data, *, saturation_time_overrides_s=None, initial_rh_overrides=None
+):
     """Calculate initial thermodynamics and aerosol normalisation metadata.
 
-    ``saturation_time_overrides_s`` is intended for one-off single-run CLI
-    sensitivity tests.  It changes only the model saturation target used to
-    infer the initial vapour amount; observed cloud-onset metadata and plotting
-    windows remain fixed.
+    ``saturation_time_overrides_s`` changes the model saturation target used to
+    infer the initial vapour amount.
+
+    ``initial_rh_overrides`` bypasses that inference completely for selected
+    experiments and sets the BMM RH at t=0 directly.  Values are fractional
+    water relative humidities (e.g. 0.95 = 95% RH).  Observed cloud timing and
+    comparison windows are not moved by either sensitivity.
     """
     states = {}
     saturation_time_overrides_s = saturation_time_overrides_s or {}
+    initial_rh_overrides = initial_rh_overrides or {}
     for met_key in readMeteoCPC.metStr:
         exp = met_key.split("-")[-1]
         if met_key not in data:
             continue
         observed_cloud_time = _cloud_onset_for_experiment(exp, data)
         met = data[met_key]
-        saturation_time = _model_saturation_time(
-            exp,
-            observed_cloud_time,
-            met["Time"],
-            cli_override_s=saturation_time_overrides_s.get(exp),
-        )
+        direct_rh = initial_rh_overrides.get(exp)
         t0 = _interp_at(met["Time"], met["Tgw mean"], 0.0, name=f"{exp} Tgas") + 273.15
         p0 = _interp_at(met["Time"], met["Pressure"], 0.0, name=f"{exp} pressure") * 100.0
-        tsat = _interp_at(
-            met["Time"], met["Tgw mean"], saturation_time,
-            name=f"{exp} saturation-target T",
-        ) + 273.15
-        psat = _interp_at(
-            met["Time"], met["Pressure"], saturation_time,
-            name=f"{exp} saturation-target p",
-        ) * 100.0
 
-        if cfg.INITIAL_RH_METHOD == "cloud_onset":
+        if direct_rh is None:
+            saturation_time = _model_saturation_time(
+                exp,
+                observed_cloud_time,
+                met["Time"],
+                cli_override_s=saturation_time_overrides_s.get(exp),
+            )
+            tsat = _interp_at(
+                met["Time"], met["Tgw mean"], saturation_time,
+                name=f"{exp} saturation-target T",
+            ) + 273.15
+            psat = _interp_at(
+                met["Time"], met["Pressure"], saturation_time,
+                name=f"{exp} saturation-target p",
+            ) * 100.0
+        else:
+            # A direct RH(t=0) sensitivity deliberately has no model saturation
+            # target.  Keep cloudT/cloudP as NaN metadata rather than implying
+            # that the observed cloud-onset time was used to initialise vapour.
+            saturation_time = np.nan
+            tsat = np.nan
+            psat = np.nan
+
+        if direct_rh is not None:
+            rh0 = float(direct_rh)
+        elif cfg.INITIAL_RH_METHOD == "cloud_onset":
             # Historical initialisation: choose qv so that, in the absence of
             # pre-cloud water exchange, the measured P/T trajectory reaches
             # liquid saturation at the prescribed cloud-onset time.
@@ -918,7 +936,11 @@ def build_initial_state(data, *, saturation_time_overrides_s=None):
             "processes are enabled.  Pre-cloud aerosol loss will therefore be "
             "double represented.  AEROSOL_INIT_TIME='t0' is recommended."
         )
-    if cfg.INITIAL_RH_METHOD == "cloud_onset" and cfg.CHAMBER_BL_MIX:
+    if (
+        cfg.INITIAL_RH_METHOD == "cloud_onset"
+        and cfg.CHAMBER_BL_MIX
+        and not initial_rh_overrides
+    ):
         print(
             "WARNING: INITIAL_RH_METHOD='cloud_onset' assumes no pre-cloud water "
             "exchange, but chamber BL mixing is enabled.  Cloud onset is then a "
@@ -1101,7 +1123,7 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
                   bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
                   wall_ice_water_init_kg=None, wall_water_efficiency=None,
                   wall_vapour_transfer_velocity_ms=None,
-                  bl_evap_size_exp=None):
+                  bl_evap_size_exp=None, iasd_xthresh=None):
     """Return a complete BMM namelist for one iSKYLAB experiment.
 
     If ``scefile`` is supplied, point the main BMM namelist at that SCE
@@ -1127,6 +1149,36 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
         text = set_value(text, "ice_flag", 1)
         text = set_literal_array(
             text, "ice_nucleation_mech(1:4)", cfg.DUST_ICE_NUCLEATION_MECH
+        )
+
+        # Explicit IASD/INAS normally retains the historical activation
+        # requirement.  Supplying --iasd-xthresh opts this run into the
+        # alternative wetting criterion X = Vwater/Vdry >= Xthresh.
+        if iasd_xthresh is None:
+            iasd_mode = int(getattr(cfg, "IASD_WETTING_MODE", 0))
+            xthresh = float(getattr(cfg, "IASD_XTHRESH", 0.01))
+        else:
+            iasd_mode = 1
+            xthresh = float(iasd_xthresh)
+
+        text = set_or_insert_value(
+            text,
+            "inas_wetting_mode",
+            iasd_mode,
+            after="ice_nucleation_mech(1:4)",
+            group="run_vars",
+            comment=(
+                "IASD/INAS wetting eligibility: 0=require activation; "
+                "1=require X=Vwater/Vdry >= inas_xthresh."
+            ),
+        )
+        text = set_or_insert_value(
+            text,
+            "inas_xthresh",
+            xthresh,
+            after="inas_wetting_mode",
+            group="run_vars",
+            comment="Dimensionless IASD/INAS wetting threshold Xthresh.",
         )
     text = set_value(text, "fallout_flag", bool(cfg.FALLOUT_FLAG))
     text = set_value(text, "residence_depth", float(cfg.RESIDENCE_DEPTH))
@@ -1347,7 +1399,8 @@ def run_batch(batch_sims, states, data, winit, *, sce_bins=None,
               bl_tau_s=None, bl_temp_offset_k=None,
               bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
               wall_ice_water_init_kg=None, wall_water_efficiency=None,
-              wall_vapour_transfer_velocity_ms=None, bl_evap_size_exp=None):
+              wall_vapour_transfer_velocity_ms=None, bl_evap_size_exp=None,
+              iasd_xthresh=None):
     """Generate namelists, run the BMM and return aerosol mode totals."""
     cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     if not cfg.BMM_EXECUTABLE.exists():
@@ -1373,6 +1426,7 @@ def run_batch(batch_sims, states, data, winit, *, sce_bins=None,
                 wall_water_efficiency=wall_water_efficiency,
                 wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
                 bl_evap_size_exp=bl_evap_size_exp,
+                iasd_xthresh=iasd_xthresh,
             )
             namelist_file = tmpdir / f"namelist-{exp}.in"
             write_text(namelist_file, namelist_text)
@@ -2065,7 +2119,7 @@ def run_single_experiment(exp, state, data, *, winit=1.3, sce_bins=None,
                           bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
                           wall_ice_water_init_kg=None, wall_water_efficiency=None,
                           wall_vapour_transfer_velocity_ms=None,
-                          bl_evap_size_exp=None):
+                          bl_evap_size_exp=None, iasd_xthresh=None):
     """Generate and run one named experiment, retaining its namelist and output."""
     cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     outdir = cfg.OUTPUT_ROOT / "single_comparison"
@@ -2088,6 +2142,7 @@ def run_single_experiment(exp, state, data, *, winit=1.3, sce_bins=None,
             wall_water_efficiency=wall_water_efficiency,
             wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
             bl_evap_size_exp=bl_evap_size_exp,
+            iasd_xthresh=iasd_xthresh,
         )
         run_namelist = tmpdir / f"namelist-{exp}.in"
         write_text(run_namelist, namelist_text)
@@ -2514,7 +2569,7 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
     sat_label = (
         f"{sat_time/60:.2f} min"
         if np.isfinite(sat_time)
-        else "n/a (dewpoint initialisation)"
+        else "n/a (direct RH or dewpoint initialisation)"
     )
     summary = (
         f"Cloud comparison: {window[0]/60:.2f}-{window[1]/60:.2f} min\n"
@@ -2790,7 +2845,7 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
          bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
          wall_ice_water_init_kg=None, wall_water_efficiency=None,
          wall_vapour_transfer_velocity_ms=None, bl_evap_size_exp=None,
-         interactive_plots=False):
+         initial_rh=None, iasd_xthresh=None, interactive_plots=False):
     if interactive_plots:
         plt.ion()
     else:
@@ -2814,6 +2869,17 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
 
     if saturation_time_min is not None and exp is None:
         raise ValueError("--cloud-formation-time-min/--saturation-time-min is only valid with --experiment")
+    if initial_rh is not None and exp is None:
+        raise ValueError("--initial-rh is only valid with --experiment")
+    if saturation_time_min is not None and initial_rh is not None:
+        raise ValueError(
+            "--initial-rh and --cloud-formation-time-min/--saturation-time-min "
+            "are mutually exclusive"
+        )
+    if initial_rh is not None and not (0.0 < float(initial_rh) <= 1.0):
+        raise ValueError("--initial-rh must be a fractional RH in the range 0 < RH <= 1")
+    if iasd_xthresh is not None and float(iasd_xthresh) < 0.0:
+        raise ValueError("--iasd-xthresh must be >= 0")
     if shift_cloud_measurements and exp is None:
         raise ValueError("--shift-cloud-measurements is currently only valid with --experiment")
     if bl_tau_s is not None and float(bl_tau_s) <= 0.0:
@@ -2836,9 +2902,17 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
             "it has no effect with dewpoint initialisation"
         )
     saturation_overrides = {}
+    initial_rh_overrides = {}
     if exp is not None and saturation_time_min is not None:
         saturation_overrides[exp] = float(saturation_time_min) * 60.0
-    states = build_initial_state(data, saturation_time_overrides_s=saturation_overrides)
+    if exp is not None and initial_rh is not None:
+        initial_rh_overrides[exp] = float(initial_rh)
+        print(f"{exp}: using direct initial RH(t=0) = {float(initial_rh):.5f}")
+    states = build_initial_state(
+        data,
+        saturation_time_overrides_s=saturation_overrides,
+        initial_rh_overrides=initial_rh_overrides,
+    )
 
     if experiment is not None:
         if exp not in states:
@@ -2854,6 +2928,7 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
                 wall_water_efficiency=wall_water_efficiency,
                 wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
                 bl_evap_size_exp=bl_evap_size_exp,
+                iasd_xthresh=iasd_xthresh,
             )
         elif not model_file.exists():
             raise FileNotFoundError(f"Existing single-run output not found: {model_file}")
@@ -2878,6 +2953,8 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
             wall_ice_water_init_kg=wall_ice_water_init_kg,
             wall_water_efficiency=wall_water_efficiency,
             wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
+            bl_evap_size_exp=bl_evap_size_exp,
+            iasd_xthresh=iasd_xthresh,
         )
 
     if do_analysis:
@@ -2902,16 +2979,35 @@ if __name__ == "__main__":
     target.add_argument("--group", type=int, default=None, help="index in experiment_metadata.BATCH_GROUPS")
     target.add_argument("--experiment", help="single experiment, e.g. Exp005 or 5")
     parser.add_argument("--winit", type=float, default=1.3, help="initial/updraft value used for a single run")
-    parser.add_argument(
+    init_water = parser.add_mutually_exclusive_group()
+    init_water.add_argument(
         "--cloud-formation-time-min", "--saturation-time-min",
         dest="saturation_time_min",
         type=float,
         default=None,
         help=(
             "single-run model cloud/saturation target in minutes from experiment "
-            "start; sets the initial vapour amount so the measured P/T trajectory "
-            "would reach liquid saturation at this time in the absence of water "
-            "exchange. The observed WELAS timing is not moved."
+            "start; infers initial vapour from the measured P/T trajectory"
+        ),
+    )
+    init_water.add_argument(
+        "--initial-rh",
+        type=float,
+        default=None,
+        help=(
+            "bypass cloud/saturation-time initialisation and set water RH directly "
+            "at t=0 as a fraction, e.g. --initial-rh 0.95 for 95%% RH"
+        ),
+    )
+    parser.add_argument(
+        "--iasd-xthresh",
+        type=float,
+        default=None,
+        help=(
+            "for dust IASD/INAS runs, bypass the normal activation requirement "
+            "and instead require X=Vwater/Vdry >= Xthresh. Supplying this option "
+            "automatically sets inas_wetting_mode=1; if omitted, config/default "
+            "behaviour is used"
         ),
     )
     parser.add_argument(
@@ -3033,6 +3129,8 @@ if __name__ == "__main__":
         experiment=args.experiment,
         winit_single=args.winit,
         saturation_time_min=args.saturation_time_min,
+        initial_rh=args.initial_rh,
+        iasd_xthresh=args.iasd_xthresh,
         sce_bins=args.sce_bins,
         shift_cloud_measurements=args.shift_cloud_measurements,
         bl_tau_s=args.bl_tau_s,

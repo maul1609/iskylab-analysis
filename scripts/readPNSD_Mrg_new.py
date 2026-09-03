@@ -7,7 +7,6 @@ only by the BMM namelist generator.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
 import iskylab_config as cfg
 
 # Fit each measured component PSD with up to three lognormal submodes.
@@ -97,21 +96,331 @@ lnsig=[[0.25,0.84],[0.19,0.45],[0.19,0.43],[0.23,0.47],[0.49,0.76],[0.46,0.68]]
 Dm=[[0.247,0.205],[0.122,0.14],[0.084,0.115],[0.061,0.102],[0.038,0.08],[0.029,0.053]]
 
 
-# Define the nonlinear function
-def lognormal_func2(x, a,b,c,d,e,f,g,h,i):
-	
-	dNdlogD= \
-		a/(np.sqrt(2.0*np.pi)*b)* \
-		np.exp(-(np.log(x/c)**2.0)/(2*b**2))
-	dNdlogD=dNdlogD+ \
-		d/(np.sqrt(2.0*np.pi)*e)* \
-		np.exp(-(np.log(x/f)**2.0)/(2*e**2))
-	dNdlogD=dNdlogD+ \
-		g/(np.sqrt(2.0*np.pi)*h)* \
-		np.exp(-(np.log(x/i)**2.0)/(2*h**2))
-# 	print(a,b,c,d,e,f)
-	return dNdlogD
+# -----------------------------------------------------------------------------
+# BMM-oriented PSD fitting
+# -----------------------------------------------------------------------------
+#
+# BMM uses the fitted PSD for quantities other than total aerosol number:
+#   * dry surface area (~D^2) controls IASD/INAS active-site abundance;
+#   * dry volume (~D^3) controls aerosol mass;
+#   * N(D >= 0.5 um) is important to DeMott-style diagnostics/prognostics.
+#
+# An unweighted least-squares fit to dN/dlnD is dominated by the number peak.
+# The fitter below therefore combines a robust log-spectrum residual with
+# explicit penalties on BMM-relevant moments.
+PNSD_FIT_COARSE_THRESHOLD_UM = 0.5
+PNSD_FIT_WEIGHTS = {
+    "shape": 1.0,
+    "number": 0.75,
+    "surface_area": 3.0,
+    "volume": 1.5,
+    "coarse_number": 3.0,
+}
+PNSD_FIT_WARN_REL_ERROR = 0.10
 
+# Broader than the historical bounds so coarse dust is not artificially forced
+# to Dm <= 0.4 um or ln(sigma) <= 0.65.
+PNSD_FIT_DMIN_UM = 0.005
+PNSD_FIT_DMAX_UM = 2.0
+PNSD_FIT_LNSIG_MIN = 0.08
+PNSD_FIT_LNSIG_MAX = 1.20
+
+
+def _single_lognormal_dndlnD(x, number, lnsig, dm):
+    x = np.asarray(x, dtype=float)
+    number = max(float(number), 0.0)
+    lnsig = max(float(lnsig), np.finfo(float).tiny)
+    dm = max(float(dm), np.finfo(float).tiny)
+    return (
+        number / (np.sqrt(2.0*np.pi)*lnsig)
+        * np.exp(-(np.log(x/dm)**2.0)/(2.0*lnsig**2.0))
+    )
+
+
+def lognormal_func2(x, a,b,c,d,e,f,g,h,i):
+    """Historical public 3-mode function retained for compatibility."""
+    return (
+        _single_lognormal_dndlnD(x,a,b,c)
+        + _single_lognormal_dndlnD(x,d,e,f)
+        + _single_lognormal_dndlnD(x,g,h,i)
+    )
+
+
+def _log_edges_from_centres(d):
+    d=np.asarray(d,dtype=float)
+    if d.ndim != 1 or d.size < 2:
+        raise ValueError("PSD diameter must be a 1-D array with at least 2 bins")
+    if np.any(~np.isfinite(d)) or np.any(d <= 0.0) or np.any(np.diff(d) <= 0.0):
+        raise ValueError("PSD diameter bins must be finite, positive and increasing")
+    ld=np.log(d)
+    e=np.empty(d.size+1)
+    e[1:-1]=0.5*(ld[:-1]+ld[1:])
+    e[0]=ld[0]-0.5*(ld[1]-ld[0])
+    e[-1]=ld[-1]+0.5*(ld[-1]-ld[-2])
+    return e
+
+
+def _measured_moments(d,y,threshold=PNSD_FIT_COARSE_THRESHOLD_UM):
+    """Measured raw diameter moments using constant dN/dlnD in each log bin."""
+    d=np.asarray(d,dtype=float)
+    y=np.asarray(y,dtype=float)
+    e=_log_edges_from_centres(d)
+    dl=np.diff(e)
+
+    out={}
+    out["number"]=float(np.sum(y*dl))
+    out["surface_area_proxy"]=float(np.sum(y*d**2*dl))
+    out["volume_proxy"]=float(np.sum(y*d**3*dl))
+
+    lthr=np.log(float(threshold))
+    overlap=np.maximum(0.0,e[1:]-np.maximum(e[:-1],lthr))
+    out["coarse_number"]=float(np.sum(y*overlap))
+    return out
+
+
+def _fitted_moments(number,lnsig,dm,threshold=PNSD_FIT_COARSE_THRESHOLD_UM):
+    """Analytic number, D^2, D^3 and coarse-number moments of fitted modes."""
+    from scipy.special import erfc
+
+    number=np.asarray(number,dtype=float)
+    lnsig=np.asarray(lnsig,dtype=float)
+    dm=np.asarray(dm,dtype=float)
+
+    out={}
+    out["number"]=float(np.sum(number))
+    out["surface_area_proxy"]=float(
+        np.sum(number*dm**2*np.exp(2.0*lnsig**2))
+    )
+    out["volume_proxy"]=float(
+        np.sum(number*dm**3*np.exp(4.5*lnsig**2))
+    )
+    z=np.log(float(threshold)/dm)/(np.sqrt(2.0)*lnsig)
+    out["coarse_number"]=float(np.sum(0.5*number*erfc(z)))
+    return out
+
+
+def _fit_curve(d,number,lnsig,dm):
+    y=np.zeros_like(np.asarray(d,dtype=float))
+    for n,s,m in zip(number,lnsig,dm):
+        y += _single_lognormal_dndlnD(d,n,s,m)
+    return y
+
+
+def _safe_log_ratio(a,b):
+    tiny=1.0e-30
+    return np.log(max(float(a),tiny)/max(float(b),tiny))
+
+
+def _initial_guesses(d,y):
+    """Independent deterministic multi-start guesses for one component."""
+    e=_log_edges_from_centres(d)
+    weights=np.maximum(y,0.0)*np.diff(e)
+    total=float(np.sum(weights))
+    if total <= 0.0:
+        total=1.0
+
+    cdf=np.cumsum(weights)
+    if cdf[-1] > 0.0:
+        cdf=cdf/cdf[-1]
+
+    starts=[]
+    for qs in ([0.15,0.50,0.85],[0.08,0.40,0.85],[0.25,0.65,0.93]):
+        dm=[]
+        for q in qs:
+            k=int(np.searchsorted(cdf,q,side="left"))
+            k=min(max(k,0),len(d)-1)
+            dm.append(d[k])
+        starts.append((
+            np.full(3,total/3.0),
+            np.full(3,0.35),
+            np.asarray(dm,dtype=float),
+        ))
+
+    # Broad generic aerosol/dust starts.
+    for dm,sig,frac in (
+        ([0.03,0.10,0.35],[0.30,0.35,0.45],[0.45,0.40,0.15]),
+        ([0.05,0.20,0.65],[0.35,0.45,0.55],[0.40,0.40,0.20]),
+        ([0.08,0.30,0.90],[0.30,0.50,0.60],[0.35,0.45,0.20]),
+    ):
+        starts.append((
+            total*np.asarray(frac),
+            np.asarray(sig,dtype=float),
+            np.asarray(dm,dtype=float),
+        ))
+    return starts
+
+
+def _pack(number,lnsig,dm):
+    return np.column_stack((number,lnsig,dm)).reshape(-1)
+
+
+def _unpack(p):
+    q=np.asarray(p,dtype=float).reshape(3,3)
+    return q[:,0].copy(),q[:,1].copy(),q[:,2].copy()
+
+
+def _fit_quality(d,y,number,lnsig,dm):
+    fitted=_fit_curve(d,number,lnsig,dm)
+    positive=y[y > 0.0]
+    floor=max(np.percentile(positive,10.0)*0.1,1.0e-6)
+    log_rmse=float(np.sqrt(np.mean(
+        (np.log10(fitted+floor)-np.log10(y+floor))**2
+    )))
+
+    measured=_measured_moments(d,y)
+    model=_fitted_moments(number,lnsig,dm)
+    rel={}
+    for name,val in measured.items():
+        rel[name]=(model[name]-val)/val if val > 0.0 else np.nan
+
+    return {
+        "log10_rmse":log_rmse,
+        "measured":measured,
+        "fitted":model,
+        "relative_error":rel,
+    }
+
+
+def _fit_component_bmm(diameter_um,observed):
+    """Three-lognormal fit optimised for the quantities BMM actually uses."""
+    from scipy.optimize import least_squares
+
+    d=np.asarray(diameter_um,dtype=float)
+    y=np.asarray(observed,dtype=float)
+
+    valid=np.isfinite(d) & np.isfinite(y) & (d > 0.0) & (y >= 0.0)
+    d=d[valid]
+    y=y[valid]
+    if d.size < 6:
+        raise ValueError("Too few valid PSD bins for a 3-mode fit")
+    if not np.any(y > 0.0):
+        raise ValueError("PSD contains no positive concentrations")
+
+    measured=_measured_moments(d,y)
+
+    positive=y[y > 0.0]
+    floor=max(np.percentile(positive,10.0)*0.1,1.0e-6)
+
+    nscale=max(measured["number"],1.0)
+    nmax=max(20.0*nscale,1.0e5)
+
+    lower=np.tile(
+        [0.0,PNSD_FIT_LNSIG_MIN,PNSD_FIT_DMIN_UM],3
+    )
+    upper=np.tile(
+        [nmax,PNSD_FIT_LNSIG_MAX,PNSD_FIT_DMAX_UM],3
+    )
+
+    shape_scale=PNSD_FIT_WEIGHTS["shape"]/np.sqrt(d.size)
+
+    def residual(p):
+        number,lnsig,dm=_unpack(p)
+        model_y=_fit_curve(d,number,lnsig,dm)
+        r=list(
+            shape_scale*(np.log(model_y+floor)-np.log(y+floor))
+        )
+
+        fm=_fitted_moments(number,lnsig,dm)
+        r.append(
+            PNSD_FIT_WEIGHTS["number"]*
+            _safe_log_ratio(fm["number"],measured["number"])
+        )
+        r.append(
+            PNSD_FIT_WEIGHTS["surface_area"]*
+            _safe_log_ratio(
+                fm["surface_area_proxy"],measured["surface_area_proxy"]
+            )
+        )
+        r.append(
+            PNSD_FIT_WEIGHTS["volume"]*
+            _safe_log_ratio(fm["volume_proxy"],measured["volume_proxy"])
+        )
+        if measured["coarse_number"] > 0.0:
+            r.append(
+                PNSD_FIT_WEIGHTS["coarse_number"]*
+                _safe_log_ratio(
+                    fm["coarse_number"],measured["coarse_number"]
+                )
+            )
+        return np.asarray(r)
+
+    best=None
+    for nums,sigs,dms in _initial_guesses(d,y):
+        x0=_pack(
+            np.clip(nums,1.0e-10,0.9*nmax),
+            np.clip(sigs,PNSD_FIT_LNSIG_MIN*1.01,PNSD_FIT_LNSIG_MAX*0.99),
+            np.clip(dms,PNSD_FIT_DMIN_UM*1.01,PNSD_FIT_DMAX_UM*0.99),
+        )
+        result=least_squares(
+            residual,x0,bounds=(lower,upper),
+            method="trf",loss="soft_l1",f_scale=0.5,
+            x_scale="jac",max_nfev=5000,
+        )
+        if best is None or result.cost < best.cost:
+            best=result
+
+    if best is None or not best.success:
+        raise RuntimeError("BMM-oriented PSD fit failed")
+
+    number,lnsig,dm=_unpack(best.x)
+    order=np.argsort(dm)
+    number=number[order]
+    lnsig=lnsig[order]
+    dm=dm[order]
+
+    metrics=_fit_quality(d,y,number,lnsig,dm)
+    metrics["optimiser_cost"]=float(best.cost)
+    metrics["optimiser_nfev"]=int(best.nfev)
+
+    # Flag active modes very close to a physical bound.
+    bound_hits=[]
+    tol=2.0e-3
+    for k,(n,s,m) in enumerate(zip(number,lnsig,dm),start=1):
+        if n <= 1.0e-6*nscale:
+            continue
+        hits=[]
+        if abs(s-PNSD_FIT_LNSIG_MIN) < tol: hits.append("lnsig_min")
+        if abs(s-PNSD_FIT_LNSIG_MAX) < tol: hits.append("lnsig_max")
+        if abs(m-PNSD_FIT_DMIN_UM) < tol: hits.append("Dm_min")
+        if abs(m-PNSD_FIT_DMAX_UM) < tol: hits.append("Dm_max")
+        if hits:
+            bound_hits.append((k,hits))
+    metrics["bound_hits"]=bound_hits
+
+    return number,lnsig,dm,metrics
+
+
+def _print_fit_quality(exp_name,component_key,metrics):
+    rel=metrics["relative_error"]
+
+    def pct(name):
+        x=rel.get(name,np.nan)
+        return "n/a" if not np.isfinite(x) else f"{100.0*x:+.2f}%"
+
+    print(
+        f"{exp_name} {component_key}: "
+        f"log10-RMSE={metrics['log10_rmse']:.3f}; "
+        f"N={pct('number')}; "
+        f"area={pct('surface_area_proxy')}; "
+        f"volume={pct('volume_proxy')}; "
+        f"N(D>={PNSD_FIT_COARSE_THRESHOLD_UM:g}um)="
+        f"{pct('coarse_number')}"
+    )
+
+    important=("surface_area_proxy","volume_proxy","coarse_number")
+    bad=[
+        name for name in important
+        if np.isfinite(rel.get(name,np.nan))
+        and abs(rel[name]) > PNSD_FIT_WARN_REL_ERROR
+    ]
+    if bad:
+        print(
+            "  WARNING: >"
+            f"{100.0*PNSD_FIT_WARN_REL_ERROR:.0f}% BMM-moment error in "
+            + ", ".join(bad)
+        )
+    if metrics["bound_hits"]:
+        print("  WARNING: fitted mode near bound:",metrics["bound_hits"])
 
 
 def readData(readThis = 3,npsdStr="InitialPNSD-Exp005"):
@@ -153,33 +462,26 @@ def readData(readThis = 3,npsdStr="InitialPNSD-Exp005"):
 		data1[npsdStr][keyList[off1+num1]]=temp.copy()
 
 
-	dm2=[0.26,0.05,0.2]
-	lnsig2=[0.2,0.2,0.3]
-	N2=[3000*0.6, \
-		3000*0.4,1000.]	
 	data1[npsdStr]['num1']=num1
 	data1[npsdStr]['keyList']=keyList.copy()
-	
+
 	for j in range(num1):
-		""" 
-			do the fit
-		"""
-# 			ind,=np.where(data1[npsdStr[readThis]][keyList[off1+num1+j]]>0.0)
-		ind=np.mgrid[0:len(data1[npsdStr][keyList[off1+num1+j]])]
-		popt, pcov = curve_fit(lognormal_func2, data1[npsdStr]['Dve'][ind],\
-			data1[npsdStr][keyList[off1+num1+j]][ind], \
-			p0=[N2[0], lnsig2[0], dm2[0], N2[1], lnsig2[1],dm2[1], N2[2], lnsig2[2],dm2[2]],\
-			bounds=([0.1,0.1,0.03,0.1,0.1,0.03,0.1,0.1,0.03],\
-				[5000,0.65,0.4,5000,0.65,0.4,5000,0.65,0.4]), \
-			method='trf') 
-		N2=[popt[0],popt[3],popt[6]]
-		lnsig2=[popt[1],popt[4],popt[7]]
-		dm2=[popt[2],popt[5],popt[8]]
-		
-		data1[npsdStr]['Nfit_' + keyList[off1+num1+j]]=N2.copy()
-		data1[npsdStr]['lnsigfit_' + keyList[off1+num1+j]]=lnsig2.copy()
-		data1[npsdStr]['dfit_' + keyList[off1+num1+j]]=dm2.copy()
-		
+		component_key=keyList[off1+num1+j]
+		observed=data1[npsdStr][component_key]
+
+		N2,lnsig2,dm2,metrics=_fit_component_bmm(
+			data1[npsdStr]['Dve'],observed
+		)
+
+		data1[npsdStr]['Nfit_' + component_key]=N2.tolist()
+		data1[npsdStr]['lnsigfit_' + component_key]=lnsig2.tolist()
+		data1[npsdStr]['dfit_' + component_key]=dm2.tolist()
+
+		# Store diagnostics next to the fitted parameters so downstream scripts
+		# can inspect fit quality without refitting the PSD.
+		data1[npsdStr]['fit_metrics_' + component_key]=metrics
+		_print_fit_quality(npsdStr,component_key,metrics)
+
 	
 	return data1
 
