@@ -96,6 +96,70 @@ def set_literal_array(text: str, name: str, values) -> str:
         raise KeyError(f"Expected exactly one namelist assignment for {name}; found {len(matches)}")
     return pattern.sub(rf"\g<indent>{name} = {value_text},", text, count=1)
 
+
+def set_or_insert_value(
+    text: str,
+    name: str,
+    value,
+    *,
+    after: str,
+    group: str,
+    comment: str | None = None,
+) -> str:
+    """Set a scalar value, inserting it into one known namelist group if absent.
+
+    This is intended for controlled namelist-schema migrations.  Existing
+    variables are still edited by :func:`set_value`.  If ``name`` is absent,
+    it is inserted immediately after the required ``after`` assignment inside
+    ``&group``.  Both the group and anchor must exist exactly once, so a stale
+    or structurally unexpected template still fails loudly rather than placing
+    the variable in an arbitrary namelist group.
+
+    ``comment`` is optional Fortran namelist documentation written as one or
+    more ``!>`` lines immediately before a newly inserted assignment.
+    """
+    # Preserve the strict normal path whenever the template already knows the
+    # variable.  ``required=False`` only tests for presence; duplicate entries
+    # are still rejected by set_value when present.
+    probe = re.compile(
+        rf"(?m)(?P<indent>^[ \t]*|(?<=[,])){re.escape(name)}\s*="
+    )
+    matches = list(probe.finditer(text))
+    if matches:
+        if len(matches) != 1:
+            raise ValueError(f"Expected one assignment for {name}, found {len(matches)}")
+        return set_value(text, name, value)
+
+    group_pattern = re.compile(
+        rf"(?ims)(?P<block>^[ \t]*&{re.escape(group)}\b.*?^[ \t]*/[ \t]*(?:!.*)?$)"
+    )
+    group_matches = list(group_pattern.finditer(text))
+    if len(group_matches) != 1:
+        raise KeyError(f"Expected exactly one &{group} group; found {len(group_matches)}")
+
+    block_match = group_matches[0]
+    block = block_match.group("block")
+    anchor_pattern = re.compile(
+        rf"(?m)^(?P<indent>[ \t]*){re.escape(after)}\s*=.*$"
+    )
+    anchors = list(anchor_pattern.finditer(block))
+    if len(anchors) != 1:
+        raise KeyError(
+            f"Cannot insert {name}: expected one anchor assignment {after} "
+            f"inside &{group}, found {len(anchors)}"
+        )
+
+    anchor = anchors[0]
+    indent = anchor.group("indent")
+    lines = []
+    if comment:
+        for line in str(comment).splitlines():
+            lines.append(f"{indent}!> {line.rstrip()}")
+    lines.append(f"{indent}{name} = {_format_scalar(value)},")
+    insertion = "\n" + "\n".join(lines)
+    new_block = block[:anchor.end()] + insertion + block[anchor.end():]
+    return text[:block_match.start()] + new_block + text[block_match.end():]
+
 def replace_group(text: str, group: str, body: str) -> str:
     """Replace an entire ``&group ... /`` block.
 

@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = REPO_ROOT / "iSKYLAB-data"
 
@@ -146,7 +148,16 @@ AEROSOL_INIT_TIME = "cloud_onset"
 CHAMBER_BL_MIX = 1
 CHAMBER_BL_TAU = 10.  # s, chamber-scale BL processing/recirculation timescale
 CHAMBER_BL_ALPHA_T = 0.0
-CHAMBER_BL_TEMP_OFFSET = -0.075  # K, optional unresolved BL sensible-temperature offset
+CHAMBER_BL_TEMP_OFFSET = 0.0  # K, optional unresolved BL sensible-temperature offset
+
+# Physical wall-vapour mass-transfer velocity [m s-1] used only when
+# chamber_bl_wall_water_mode=2.  It converts the measured vapour-pressure
+# disequilibrium with the wall into an area-mean vapour mass flux:
+#     Jv = km * (e_eq(Twall)-e_air)/(Rv*Tgas)
+# A value near 1e-3 m s-1 is a moderate starting sensitivity for a chamber;
+# it should ultimately be constrained by humidity/wall-reservoir observations
+# or a Sherwood/Reynolds-number treatment rather than by cloud LWC alone.
+CHAMBER_WALL_VAPOUR_TRANSFER_VELOCITY = 1.0e-3
 #CHAMBER_BL_TEMP_OFFSET = 0.09  # K, optional unresolved BL sensible-temperature offset
 
 # CHAMBER_BL_TAU = 50.  # s, chamber-scale BL processing/recirculation timescale
@@ -168,22 +179,47 @@ wall was warmer in this case
 """
 
 # How thermodynamically required LIQUID evaporation is represented in the PSD:
-#   1 = homogeneous diffusional evaporation.  Every activated droplet receives
-#       the same finite D^2 decrement; small droplets may naturally evaporate
-#       completely while larger droplets shrink.
-#   2 = uniform extreme inhomogeneous.  The same fraction of every activated
-#       bin evaporates completely; survivors retain their original size.
-#   3 = D2-lifetime-weighted extreme inhomogeneous.  Complete-evaporation
-#       fractions are biased toward smaller droplets as m_w^(-2/3), capped by
-#       the BL-processed fraction; survivors retain their original size.
-CHAMBER_BL_EVAP_MODE = 3
+#   1 = homogeneous evaporation: particle number is retained while liquid mass
+#       and wet size decrease.
+#   2 = inhomogeneous complete evaporation: selected wet particles return to
+#       aerosol/haze residuals while surviving particles retain their size.
+#
+# Wall/BL thermodynamics and the NET liquid-water removal target are common to
+# both modes.  Therefore homogeneous and inhomogeneous runs should have the
+# same bulk liquid-water tendency for an identical BL event; only the PSD
+# response (size loss versus number loss) differs.
+CHAMBER_BL_EVAP_MODE = 2
+#
+# Common evaporation size exponent p used by BOTH modes.
+#
+# Homogeneous mode:
+#   p = 2 : common finite D^2 decrement
+#   p = 0 : equal fractional liquid-mass shrinkage
+#
+# Inhomogeneous mode:
+#   p = 0 : uniform complete-particle number-fraction removal
+#   p = 2 : inverse-D^2 lifetime weighting
+#   p > 2 : increasingly favours complete evaporation of smaller wet particles
+CHAMBER_BL_EVAP_SIZE_EXP = 2.0
+
+# Wall-water closure modes are selected in the generated BMM namelist/CLI:
+#   0 = legacy saturation cap
+#   1 = finite reservoir + fractional relaxation toward wall equilibrium;
+#       CHAMBER_WALL_WATER_EFFICIENCY controls this legacy-reservoir strength.
+#   2 = finite reservoir + physical mass-transfer velocity;
+#       CHAMBER_WALL_VAPOUR_TRANSFER_VELOCITY controls vapour-wall exchange,
+#       independently of CHAMBER_BL_TAU.  This is the recommended physical mode.
+CHAMBER_BL_WALL_WATER_MODE = 2
+CHAMBER_WALL_WATER_EFFICIENCY = 1.0
+CHAMBER_WALL_LIQUID_WATER_INIT_KG = 0.0
+CHAMBER_WALL_ICE_WATER_INIT_KG = 0.0
 
 # ---------------------------------------------------------------------------
 # Drone-fan blade collection
 # ---------------------------------------------------------------------------
 # 0=off, 1=saturating sigmoid in current particle diameter.
 CHAMBER_FAN_LOSS = 0
-CHAMBER_FAN_LOSS_KMAX = 7.0e-3 #1.5e-3      # s-1
+CHAMBER_FAN_LOSS_KMAX = 3.0e-3 #1.5e-3      # s-1
 CHAMBER_FAN_LOSS_D50_REF = 6e-6 #10.0e-6   # m at reference RPM
 CHAMBER_FAN_LOSS_EXP = 6.0
 CHAMBER_FAN_RPM = 25000.0
@@ -284,14 +320,19 @@ DUST_INP_CATEGORY = {
     "ATD03": "atd03",
 }
 
-# Common cumulative IASD thresholds [deg C], corresponding to 255 ... 240 K
-# at exactly 1 K spacing.  There are therefore 16 thresholds.
-INP_TEMP_C = [
-    -18.15, -19.15, -20.15, -21.15,
-    -22.15, -23.15, -24.15, -25.15,
-    -26.15, -27.15, -28.15, -29.15,
-    -30.15, -31.15, -32.15, -33.15,
-]
+# Common cumulative IASD thresholds [deg C], ordered strictly from warm to cold.
+# The namelist generator now supports any number of classes and automatically
+# writes both n_inp_classes and the matching inp_temp(1:n_inp_classes) slice.
+#
+# Example: 50 thresholds spanning -18 to -33 degC (inclusive).
+INP_TEMP_C = list(np.linspace(-18.0, -30.0, 100))
+# INP_TEMP_C = [
+#     -18.15, -19.15, -20.15, -21.15,
+#     -22.15, -23.15, -24.15, -25.15,
+#     -26.15, -27.15, -28.15, -29.15,
+#     -30.15, -31.15, -32.15, -33.15,
+# ]
+
 
 # Dust experiments are configured as mixed-phase/ice runs and use Koop + INAS.
 # DeMott is disabled for these components so the explicit dust IASD reservoir

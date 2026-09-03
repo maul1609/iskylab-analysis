@@ -36,6 +36,15 @@ Important implementation notes
   dispersion, ice number and the full observed PSD are shifted consistently.
 * ``--bl-tau-s`` and ``--bl-temp-offset-k`` override the chamber BL mixing
   timescale and sensible-temperature offset for a run without editing config.
+* ``--bl-wall-water-mode 1`` enables a finite prognostic chamber-wall water
+  reservoir.  The wall starts dry by default, accumulates liquid/frost only by
+  condensation/deposition, and can subsequently return no more water than it
+  has stored.  Reservoir masses are physical kg, not kg kg-1 mixing ratios.
+* ``--bl-wall-water-mode 1`` retains the finite-reservoir fractional-relaxation
+  closure for reproducibility. ``--bl-wall-water-mode 2`` uses the same finite
+  prognostic reservoir but computes a physical wall vapour mass flux from a
+  transfer velocity and the vapour-pressure disequilibrium with measured Twall.
+  In mode 2 wall vapour exchange is independent of ``chamber_bl_tau``.
 * ``--sce-bins``/``--scebins`` creates a temporary copy of ``sce/namelist.in``,
   changes ``n_binsc`` only in that copy, and points the generated BMM namelist
   ``scefile`` at it.  The repository SCE namelist is never modified.
@@ -45,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import shutil
 import subprocess
 import tempfile
@@ -60,7 +70,10 @@ import readMeteoCPC
 import readOPC_Merged
 import readPNSD_Mrg_new
 import svp
-from namelist_utils import read_text, replace_group, set_array, set_literal_array, set_value, write_text
+from namelist_utils import (
+    read_text, replace_group, set_array, set_literal_array, set_or_insert_value,
+    set_value, write_text,
+)
 
 R_GAS = 8.314
 M_WATER = 18.0e-3
@@ -929,7 +942,42 @@ def _format_fortran_array(name, values, n, values_per_line=8):
     return "\n".join(lines)
 
 
-def chamber_spec_body(met):
+def _set_dynamic_array_slice(text, name, values):
+    """Replace a 1-D namelist array assignment regardless of old upper bound.
+
+    For example, if the template contains ``inp_temp(1:16)`` and 50 values are
+    supplied, this finds the existing slice and asks ``set_array`` to replace
+    that exact template object with ``inp_temp(1:50)``.
+    """
+    values = np.asarray(values, dtype=float).reshape(-1)
+    if values.size < 1:
+        raise ValueError(f"{name} must contain at least one value")
+
+    pattern = re.compile(
+        rf"(?im)^[ \t]*({re.escape(name)}\s*\(\s*1\s*:\s*\d+\s*\))\s*="
+    )
+    match = pattern.search(text)
+    if match is None:
+        raise ValueError(
+            f"Could not find an existing {name}(1:N) assignment in the BMM template"
+        )
+
+    old_object = match.group(1)
+    updated = set_array(text, old_object, values)
+
+    # set_array replaces values but may retain the old object text/bounds,
+    # depending on namelist_utils version. Ensure the LHS bound matches the
+    # actual number of supplied classes.
+    updated = re.sub(
+        rf"(?im)^([ \t]*){re.escape(old_object)}\s*=",
+        lambda m: f"{m.group(1)}{name}(1:{values.size}) =",
+        updated,
+        count=1,
+    )
+    return updated
+
+
+def chamber_spec_body(met, *, require_wall_temperature=False):
     """Create the variable-length &chamber_spec body for one experiment.
 
     ``Pressure``, ``Tgw mean`` and ``Tww mean`` are the working series from
@@ -951,7 +999,7 @@ def chamber_spec_body(met):
                 _format_fortran_array("qtot_chamber", met["qtot_forcing"], n),
             ]
         )
-    if cfg.CHAMBER_BL_MIX and cfg.CHAMBER_BL_ALPHA_T > 0.0:
+    if require_wall_temperature:
         blocks.extend(
             [
                 "    ! Measured wall temperature (Tww_mean) for wall-coupled BL processing.",
@@ -1049,7 +1097,11 @@ def _aerosol_mode_arrays(exp, state, data):
 
 
 def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
-                  bl_tau_s=None, bl_temp_offset_k=None):
+                  bl_tau_s=None, bl_temp_offset_k=None,
+                  bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
+                  wall_ice_water_init_kg=None, wall_water_efficiency=None,
+                  wall_vapour_transfer_velocity_ms=None,
+                  bl_evap_size_exp=None):
     """Return a complete BMM namelist for one iSKYLAB experiment.
 
     If ``scefile`` is supplied, point the main BMM namelist at that SCE
@@ -1084,6 +1136,35 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
     force_t = cfg.FORCE_TEMPERATURE and not cfg.SYNTHETIC_UPDRAFT
     force_q = cfg.FORCE_QTOT and not cfg.SYNTHETIC_UPDRAFT
     bl_mix = 0 if cfg.SYNTHETIC_UPDRAFT else cfg.CHAMBER_BL_MIX
+    wall_water_mode = int(
+        getattr(cfg, "CHAMBER_BL_WALL_WATER_MODE", 0)
+        if bl_wall_water_mode is None else bl_wall_water_mode
+    )
+    wall_liq_init_kg = float(
+        getattr(cfg, "CHAMBER_WALL_LIQUID_WATER_INIT_KG", 0.0)
+        if wall_liquid_water_init_kg is None else wall_liquid_water_init_kg
+    )
+    wall_ice_init_kg = float(
+        getattr(cfg, "CHAMBER_WALL_ICE_WATER_INIT_KG", 0.0)
+        if wall_ice_water_init_kg is None else wall_ice_water_init_kg
+    )
+    wall_eff = float(
+        getattr(cfg, "CHAMBER_WALL_WATER_EFFICIENCY", 1.0)
+        if wall_water_efficiency is None else wall_water_efficiency
+    )
+    wall_km = float(
+        getattr(cfg, "CHAMBER_WALL_VAPOUR_TRANSFER_VELOCITY", 1.0e-3)
+        if wall_vapour_transfer_velocity_ms is None
+        else wall_vapour_transfer_velocity_ms
+    )
+    evap_size_exp = float(
+        getattr(
+            cfg,
+            "CHAMBER_BL_EVAP_SIZE_EXP",
+            getattr(cfg, "CHAMBER_BL_INHOM_SIZE_EXP", 2.0),
+        )
+        if bl_evap_size_exp is None else bl_evap_size_exp
+    )
     fan_loss = 0 if cfg.SYNTHETIC_UPDRAFT else cfg.CHAMBER_FAN_LOSS
     wall_loss = 0 if cfg.SYNTHETIC_UPDRAFT else cfg.CHAMBER_WALL_LOSS
 
@@ -1091,8 +1172,21 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
         raise ValueError("FORCE_QTOT=True requires WRITE_QTOT_DATA=True")
     if bl_mix not in (0, 1):
         raise ValueError("CHAMBER_BL_MIX must be 0 (off) or 1 (on)")
-    if bl_mix and cfg.CHAMBER_BL_ALPHA_T > 0.0 and "Tww mean" not in met:
-        raise ValueError("CHAMBER_BL_ALPHA_T > 0 requires measured Tww_mean")
+    if wall_water_mode not in (0, 1, 2):
+        raise ValueError("chamber BL wall-water mode must be 0, 1, or 2")
+    if wall_liq_init_kg < 0.0 or wall_ice_init_kg < 0.0:
+        raise ValueError("initial wall liquid/ice reservoirs must be non-negative kg")
+    if not 0.0 <= wall_eff <= 1.0:
+        raise ValueError("wall water efficiency must be between 0 and 1")
+    if wall_km < 0.0:
+        raise ValueError("wall vapour transfer velocity must be >= 0 m s-1")
+    if evap_size_exp < 0.0:
+        raise ValueError("chamber BL evaporation size exponent must be >= 0")
+    need_wall_temperature = bool(
+        bl_mix and (cfg.CHAMBER_BL_ALPHA_T > 0.0 or wall_water_mode >= 1)
+    )
+    if need_wall_temperature and "Tww mean" not in met:
+        raise ValueError("BL thermal/wall-water processing requires measured Tww_mean")
 
     chamber_values = {
         "n_levels_c": n,
@@ -1103,10 +1197,19 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
         "chamber_bl_tau": (cfg.CHAMBER_BL_TAU if bl_tau_s is None else float(bl_tau_s)),
         "chamber_bl_alpha_t": cfg.CHAMBER_BL_ALPHA_T,
         "chamber_bl_evap_mode": cfg.CHAMBER_BL_EVAP_MODE,
+        "chamber_bl_evap_size_exp": evap_size_exp,
+        # Keep the deprecated Fortran alias neutral.  This prevents an older
+        # template value from overriding the new common exponent.
+        "chamber_bl_inhom_size_exp": -1.0,
         "chamber_bl_temp_offset": (
             cfg.CHAMBER_BL_TEMP_OFFSET
             if bl_temp_offset_k is None else float(bl_temp_offset_k)
         ),
+        "chamber_bl_wall_water_mode": wall_water_mode,
+        "chamber_wall_water_efficiency": wall_eff,
+        "chamber_wall_vapour_transfer_velocity": wall_km,
+        "chamber_wall_liquid_water_init": wall_liq_init_kg,
+        "chamber_wall_ice_water_init": wall_ice_init_kg,
         "chamber_fan_loss": fan_loss,
         "chamber_fan_loss_kmax": cfg.CHAMBER_FAN_LOSS_KMAX,
         "chamber_fan_loss_d50_ref": cfg.CHAMBER_FAN_LOSS_D50_REF,
@@ -1118,12 +1221,68 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
         "chamber_diameter": cfg.CHAMBER_DIAMETER,
         "chamber_height": cfg.CHAMBER_HEIGHT,
     }
+    # The four wall-water controls post-date some iSKYLAB BMM templates.
+    # Migrate only these known schema additions when an older template is
+    # encountered; all established variables remain strict and must already
+    # exist.  Anchored insertion keeps the additions inside &chamber_options.
+    wall_water_schema = {
+        "chamber_bl_evap_size_exp": (
+            "chamber_bl_evap_mode",
+            "Common evaporation size exponent p: homogeneous changes size, inhomogeneous changes number; p=2 is D2-based.",
+        ),
+        "chamber_bl_inhom_size_exp": (
+            "chamber_bl_evap_size_exp",
+            "Deprecated compatibility alias; keep at -1 so it cannot override the new common exponent.",
+        ),
+        "chamber_bl_wall_water_mode": (
+            "chamber_bl_temp_offset",
+            "Wall-vapour closure: 0=legacy; 1=reservoir relaxation; 2=physical finite-rate mass transfer.",
+        ),
+        "chamber_wall_water_efficiency": (
+            "chamber_bl_wall_water_mode",
+            "Fractional vapour equilibration during one BL wall encounter [0..1].",
+        ),
+        "chamber_wall_vapour_transfer_velocity": (
+            "chamber_wall_water_efficiency",
+            "Physical wall-vapour mass-transfer velocity [m s-1], used by wall-water mode 2.",
+        ),
+        "chamber_wall_liquid_water_init": (
+            "chamber_wall_vapour_transfer_velocity",
+            "Initial physical liquid-water mass stored on the wall [kg]; default dry wall = 0.",
+        ),
+        "chamber_wall_ice_water_init": (
+            "chamber_wall_liquid_water_init",
+            "Initial physical ice/frost mass stored on the wall [kg]; default dry wall = 0.",
+        ),
+    }
     for name, value in chamber_values.items():
-        text = set_value(text, name, value)
-    text = replace_group(text, "chamber_spec", chamber_spec_body(met))
+        if name in wall_water_schema:
+            after, comment = wall_water_schema[name]
+            text = set_or_insert_value(
+                text, name, value, after=after, group="chamber_options",
+                comment=comment,
+            )
+        else:
+            text = set_value(text, name, value)
+    text = replace_group(
+        text, "chamber_spec",
+        chamber_spec_body(met, require_wall_temperature=need_wall_temperature),
+    )
 
     # Measured/fitted aerosol initial conditions.
     aer = _aerosol_mode_arrays(exp, state, data)
+
+    inp_temp_c = np.asarray(cfg.INP_TEMP_C, dtype=float).reshape(-1)
+    if inp_temp_c.size < 1:
+        raise ValueError("INP_TEMP_C must contain at least one temperature threshold")
+    if not np.all(np.isfinite(inp_temp_c)):
+        raise ValueError("INP_TEMP_C contains non-finite values")
+    if np.any(np.diff(inp_temp_c) >= 0.0):
+        raise ValueError(
+            "INP_TEMP_C must be strictly ordered from warm to cold "
+            "(e.g. -18, -18.3, ..., -33 degC)"
+        )
+
     for name, values in [
         ("n_aer1(1:3,1:1)", aer["n1"]),
         ("d_aer1(1:3,1:1)", aer["d1_m"]),
@@ -1135,11 +1294,12 @@ def make_namelist(exp, state, data, output_file, *, winit=1.3, scefile=None,
         ("kappa_core1(1:4)", aer["kappa"]),
         ("afhh_core1(1:4)", aer["afhh"]),
         ("bfhh_core1(1:4)", aer["bfhh"]),
-        ("inp_temp(1:16)", cfg.INP_TEMP_C),
     ]:
         text = set_array(text, name, values)
+
+    text = _set_dynamic_array_slice(text, "inp_temp", inp_temp_c)
     text = set_literal_array(text, "inp_category(1:4)", aer["inp_category"])
-    text = set_value(text, "n_inp_classes", len(cfg.INP_TEMP_C))
+    text = set_value(text, "n_inp_classes", int(inp_temp_c.size))
 
     return text, aer
 
@@ -1184,7 +1344,10 @@ def _make_temp_sce_namelist(sce_bins, tmpdir):
 
 
 def run_batch(batch_sims, states, data, winit, *, sce_bins=None,
-              bl_tau_s=None, bl_temp_offset_k=None):
+              bl_tau_s=None, bl_temp_offset_k=None,
+              bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
+              wall_ice_water_init_kg=None, wall_water_efficiency=None,
+              wall_vapour_transfer_velocity_ms=None, bl_evap_size_exp=None):
     """Generate namelists, run the BMM and return aerosol mode totals."""
     cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     if not cfg.BMM_EXECUTABLE.exists():
@@ -1204,6 +1367,12 @@ def run_batch(batch_sims, states, data, winit, *, sce_bins=None,
                 exp, states[exp], data, output_file, winit=winit[nn],
                 scefile=scefile, bl_tau_s=bl_tau_s,
                 bl_temp_offset_k=bl_temp_offset_k,
+                bl_wall_water_mode=bl_wall_water_mode,
+                wall_liquid_water_init_kg=wall_liquid_water_init_kg,
+                wall_ice_water_init_kg=wall_ice_water_init_kg,
+                wall_water_efficiency=wall_water_efficiency,
+                wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
+                bl_evap_size_exp=bl_evap_size_exp,
             )
             namelist_file = tmpdir / f"namelist-{exp}.in"
             write_text(namelist_file, namelist_text)
@@ -1892,7 +2061,11 @@ def _series_scores(model_time, model_values, obs_time, obs_values, window, lag=0
 
 
 def run_single_experiment(exp, state, data, *, winit=1.3, sce_bins=None,
-                          bl_tau_s=None, bl_temp_offset_k=None):
+                          bl_tau_s=None, bl_temp_offset_k=None,
+                          bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
+                          wall_ice_water_init_kg=None, wall_water_efficiency=None,
+                          wall_vapour_transfer_velocity_ms=None,
+                          bl_evap_size_exp=None):
     """Generate and run one named experiment, retaining its namelist and output."""
     cfg.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     outdir = cfg.OUTPUT_ROOT / "single_comparison"
@@ -1909,6 +2082,12 @@ def run_single_experiment(exp, state, data, *, winit=1.3, sce_bins=None,
         namelist_text, _ = make_namelist(
             exp, state, data, output_file, winit=winit, scefile=scefile,
             bl_tau_s=bl_tau_s, bl_temp_offset_k=bl_temp_offset_k,
+            bl_wall_water_mode=bl_wall_water_mode,
+            wall_liquid_water_init_kg=wall_liquid_water_init_kg,
+            wall_ice_water_init_kg=wall_ice_water_init_kg,
+            wall_water_efficiency=wall_water_efficiency,
+            wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
+            bl_evap_size_exp=bl_evap_size_exp,
         )
         run_namelist = tmpdir / f"namelist-{exp}.in"
         write_text(run_namelist, namelist_text)
@@ -1942,6 +2121,29 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
     from matplotlib.colors import LogNorm
 
     model = readModel.readData(model_file, modelStr=exp)[exp]
+
+    # The wall-reservoir diagnostics are newer than some readModel.py versions.
+    # Read them directly from the NetCDF output when necessary so the analysis
+    # remains compatible with both old and updated model readers.
+    reservoir_fields = (
+        "chamber_wall_liquid_water",
+        "chamber_wall_ice_water",
+        "qchamber_wall_liq_evap",
+        "qchamber_wall_liq_cond",
+        "qchamber_wall_ice_subl",
+        "qchamber_wall_ice_dep",
+        "qchamber_bl",
+        "qchamber_bl_evap",
+        "chamber_wall_rh",
+        "chamber_wall_vapour_flux",
+    )
+    missing_reservoir_fields = [name for name in reservoir_fields if name not in model]
+    if missing_reservoir_fields:
+        from netCDF4 import Dataset
+        with Dataset(model_file) as nc:
+            for name in missing_reservoir_fields:
+                if name in nc.variables:
+                    model[name] = np.asarray(nc.variables[name][:]).squeeze()
     obs = _observed_bulk_series(exp, data)
     met = data[f"MeteoCPC-{exp}"]
     window = _cloud_comparison_window(exp, obs)
@@ -2249,10 +2451,14 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
     # (g) Cumulative chamber/fallout diagnostics
     loss_fields = [
         ("qfan_liq", "Fan loss", C_BMM, "-"),
-        ("qwall_liq", "Wall loss", C_WALL, "-"),
+        ("qwall_liq", "Particle wall loss", C_WALL, "-"),
         ("qfall_liq", "Fallout", C_FORCING, "--"),
-        ("qchamber_bl", "BL wall-water loss", C_BMM_TOTAL, "-."),
-        ("qchamber_bl_evap", "BL liquid → vapour", C_ICE, ":"),
+        ("qchamber_bl", "BL wall-water net loss (+loss, -source)", C_BMM_TOTAL, "-."),
+        ("qchamber_wall_liq_evap", "Wall-liquid evaporation source", C_FORCING, ":"),
+        ("qchamber_wall_liq_cond", "Wall-liquid condensation sink", C_WALL, "--"),
+        ("qchamber_wall_ice_subl", "Wall-frost sublimation source", C_ACT, ":"),
+        ("qchamber_wall_ice_dep", "Wall-frost deposition sink", C_ICE, "--"),
+        ("qchamber_bl_evap", "BL particle liquid → vapour", C_ICE, ":"),
     ]
     any_loss = False
     for name, label, colour, linestyle in loss_fields:
@@ -2262,10 +2468,37 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
                 color=colour, linestyle=linestyle, linewidth=1.8, label=label,
             )
             any_loss = True
-    ax[6].set_title("(g) Cumulative chamber / particle-water diagnostics")
-    ax[6].set_ylabel(r"Cumulative water diagnostic (g kg$^{-1}$)")
-    if any_loss:
-        ax[6].legend(fontsize=8, loc="best")
+    ax[6].set_title("(g) Chamber water exchange and wall reservoirs")
+    ax[6].set_ylabel(r"LEFT axis: cumulative water diagnostic (g kg$^{-1}$)")
+
+    # Prognostic wall reservoirs are physical chamber masses [kg], deliberately
+    # not mixing ratios.  Plot them in grams on a separate axis: the expected
+    # reservoir is normally only a few grams, so a kg-scale axis can hide it.
+    ax6r = ax[6].twinx()
+    any_reservoir = False
+    reservoir_max_g = 0.0
+    for name, label, colour, linestyle in (
+        ("chamber_wall_liquid_water", "Wall liquid reservoir", C_WALL, "-"),
+        ("chamber_wall_ice_water", "Wall ice/frost reservoir", C_ICE, "-."),
+    ):
+        if name in model:
+            reservoir_g = 1.0e3 * np.asarray(model[name], dtype=float)
+            ax6r.plot(
+                model["time"] / 60.0, reservoir_g,
+                color=colour, linestyle=linestyle, linewidth=2.0,
+                label=f"[RIGHT axis] {label}",
+            )
+            finite = reservoir_g[np.isfinite(reservoir_g)]
+            if finite.size:
+                reservoir_max_g = max(reservoir_max_g, float(np.max(finite)))
+            any_reservoir = True
+    if any_reservoir:
+        ax6r.set_ylabel("RIGHT axis: wall-water reservoir (g)")
+        ax6r.set_ylim(0.0, max(1.0, 1.08 * reservoir_max_g))
+    h1, l1 = ax[6].get_legend_handles_labels()
+    h2, l2 = ax6r.get_legend_handles_labels()
+    if any_loss or any_reservoir:
+        ax[6].legend(h1 + h2, l1 + l2, fontsize=7.2, loc="best")
     ax[6].grid(alpha=0.3)
 
     # (h) Summary panel
@@ -2303,6 +2536,29 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
         f"Integral selected ql M/O: {int_ql_model:.4g} / {int_ql_obs:.4g} kg s kg-1\n"
         f"Integral total BMM ql: {int_ql_model_total:.4g} kg s kg-1"
     )
+    wall_liq = np.asarray(
+        model.get("chamber_wall_liquid_water", np.full_like(model["time"], np.nan)),
+        dtype=float,
+    )
+    wall_ice = np.asarray(
+        model.get("chamber_wall_ice_water", np.full_like(model["time"], np.nan)),
+        dtype=float,
+    )
+    wall_total = wall_liq + wall_ice
+    if np.any(np.isfinite(wall_total)):
+        final_liq_g = (
+            1.0e3 * float(wall_liq[np.flatnonzero(np.isfinite(wall_liq))[-1]])
+            if np.any(np.isfinite(wall_liq)) else np.nan
+        )
+        final_ice_g = (
+            1.0e3 * float(wall_ice[np.flatnonzero(np.isfinite(wall_ice))[-1]])
+            if np.any(np.isfinite(wall_ice)) else np.nan
+        )
+        max_total_g = 1.0e3 * float(np.nanmax(wall_total))
+        summary += (
+            f"\nFinal wall liquid/ice: {final_liq_g:.3g} / {final_ice_g:.3g} g"
+            f"\nMax total wall reservoir: {max_total_g:.3g} g"
+        )
     ax[7].set_title("(h) Comparison summary")
     ax[7].text(0.02, 0.98, summary, va="top", family="monospace", fontsize=9)
 
@@ -2324,6 +2580,30 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
         fontsize=14,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.965))
+
+    # Dedicated wall-vapour diagnostic.  This is especially useful for the
+    # physical mass-transfer closure (mode 2): RHwall shows the thermodynamic
+    # driving force and Jv shows the actual signed area-mean mass flux.
+    wall_fig = None
+    if "chamber_wall_rh" in model or "chamber_wall_vapour_flux" in model:
+        wall_fig, wax = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+        if "chamber_wall_rh" in model:
+            wall_rh = np.asarray(model["chamber_wall_rh"], dtype=float)
+            wax[0].plot(model["time"] / 60.0, wall_rh, linewidth=1.8)
+            wax[0].axhline(1.0, linestyle="--", linewidth=1.0)
+            wax[0].set_ylabel(r"$RH_{wall}$")
+            wax[0].set_title("Vapour relative humidity with respect to measured wall temperature")
+            wax[0].grid(alpha=0.3)
+        if "chamber_wall_vapour_flux" in model:
+            wall_flux = 1.0e6 * np.asarray(model["chamber_wall_vapour_flux"], dtype=float)
+            wax[1].plot(model["time"] / 60.0, wall_flux, linewidth=1.8)
+            wax[1].axhline(0.0, linestyle="--", linewidth=1.0)
+            wax[1].set_ylabel(r"$J_v$ (mg m$^{-2}$ s$^{-1}$)")
+            wax[1].set_title("Signed wall vapour flux (+ wall to air; - air to wall)")
+            wax[1].grid(alpha=0.3)
+        wax[1].set_xlabel("Experiment time (min)")
+        wall_fig.suptitle(f"{exp}: chamber wall-vapour exchange")
+        wall_fig.tight_layout()
 
     # Direct WELAS/model PSD comparison on a deliberately coarser common
     # logarithmic grid.  The native WELAS grid is much finer than the number
@@ -2491,6 +2771,8 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
             psd_fig.savefig(outdir / f"psd-{exp}.png", dpi=180)
         if full_psd_fig is not None:
             full_psd_fig.savefig(outdir / f"model-full-psd-{exp}.png", dpi=180)
+        if wall_fig is not None:
+            wall_fig.savefig(outdir / f"wall-vapour-{exp}.png", dpi=180)
         with (outdir / f"metrics-{exp}.csv").open("w", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(["metric", "value"])
@@ -2498,11 +2780,22 @@ def analyse_single_experiment(exp, data, model_file, *, show=True,
         print(f"Single-experiment diagnostics written to {outdir}")
     if show:
         plt.show()
+        if not plt.isinteractive():
+            plt.close("all")
     return fig, psd_fig, full_psd_fig, metrics
 
 def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=DO_PLOT,
          experiment=None, winit_single=1.3, saturation_time_min=None, sce_bins=None,
-         shift_cloud_measurements=False, bl_tau_s=None, bl_temp_offset_k=None):
+         shift_cloud_measurements=False, bl_tau_s=None, bl_temp_offset_k=None,
+         bl_wall_water_mode=None, wall_liquid_water_init_kg=None,
+         wall_ice_water_init_kg=None, wall_water_efficiency=None,
+         wall_vapour_transfer_velocity_ms=None, bl_evap_size_exp=None,
+         interactive_plots=False):
+    if interactive_plots:
+        plt.ion()
+    else:
+        plt.ioff()
+
     if not READ_DATA:
         raise RuntimeError("READ_DATA=False is no longer supported without supplying a cached data dictionary")
 
@@ -2525,6 +2818,18 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
         raise ValueError("--shift-cloud-measurements is currently only valid with --experiment")
     if bl_tau_s is not None and float(bl_tau_s) <= 0.0:
         raise ValueError("--bl-tau-s must be > 0")
+    if bl_wall_water_mode is not None and int(bl_wall_water_mode) not in (0, 1, 2):
+        raise ValueError("--bl-wall-water-mode must be 0, 1 or 2")
+    if wall_liquid_water_init_kg is not None and float(wall_liquid_water_init_kg) < 0.0:
+        raise ValueError("--wall-liquid-water-init-kg must be >= 0")
+    if wall_ice_water_init_kg is not None and float(wall_ice_water_init_kg) < 0.0:
+        raise ValueError("--wall-ice-water-init-kg must be >= 0")
+    if wall_water_efficiency is not None and not 0.0 <= float(wall_water_efficiency) <= 1.0:
+        raise ValueError("--wall-water-efficiency must be between 0 and 1")
+    if wall_vapour_transfer_velocity_ms is not None and float(wall_vapour_transfer_velocity_ms) < 0.0:
+        raise ValueError("--wall-vapour-transfer-velocity-ms must be >= 0")
+    if bl_evap_size_exp is not None and float(bl_evap_size_exp) < 0.0:
+        raise ValueError("--bl-evap-size-exp must be >= 0")
     if saturation_time_min is not None and cfg.INITIAL_RH_METHOD != "cloud_onset":
         raise ValueError(
             "--cloud-formation-time-min/--saturation-time-min requires INITIAL_RH_METHOD='cloud_onset'; "
@@ -2543,6 +2848,12 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
             model_file = run_single_experiment(
                 exp, states[exp], data, winit=winit_single, sce_bins=sce_bins,
                 bl_tau_s=bl_tau_s, bl_temp_offset_k=bl_temp_offset_k,
+                bl_wall_water_mode=bl_wall_water_mode,
+                wall_liquid_water_init_kg=wall_liquid_water_init_kg,
+                wall_ice_water_init_kg=wall_ice_water_init_kg,
+                wall_water_efficiency=wall_water_efficiency,
+                wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
+                bl_evap_size_exp=bl_evap_size_exp,
             )
         elif not model_file.exists():
             raise FileNotFoundError(f"Existing single-run output not found: {model_file}")
@@ -2562,6 +2873,11 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
         vals1, vals2 = run_batch(
             batch_sims, states, data, winit, sce_bins=sce_bins,
             bl_tau_s=bl_tau_s, bl_temp_offset_k=bl_temp_offset_k,
+            bl_wall_water_mode=bl_wall_water_mode,
+            wall_liquid_water_init_kg=wall_liquid_water_init_kg,
+            wall_ice_water_init_kg=wall_ice_water_init_kg,
+            wall_water_efficiency=wall_water_efficiency,
+            wall_vapour_transfer_velocity_ms=wall_vapour_transfer_velocity_ms,
         )
 
     if do_analysis:
@@ -2575,6 +2891,8 @@ def main(group=THIS_RUN, run_model=RUN_MODEL, do_analysis=DO_ANALYSIS, do_plot=D
         fig = analyse_batch(batch_sims, states, data, vals1, vals2, meta.GROUP_TYPE[group])
         if do_plot:
             plt.show()
+            if not plt.isinteractive():
+                plt.close("all")
         return fig
 
 
@@ -2615,12 +2933,74 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--bl-evap-size-exp", "--bl-inhom-size-exp",
+        dest="bl_evap_size_exp",
+        type=float,
+        default=None,
+        help=(
+            "common chamber-BL evaporation size exponent p. Homogeneous mode "
+            "uses p to control size/mass shrinkage; inhomogeneous mode uses p "
+            "to control complete-particle selection. p=2 is D2-based in both. "
+            "--bl-inhom-size-exp is retained as a deprecated alias."
+        ),
+    )
+    parser.add_argument(
         "--bl-temp-offset-k",
         type=float,
         default=None,
         help=(
             "override chamber_bl_temp_offset (K) in generated BMM namelists for "
             "this run; if omitted use iskylab_config.CHAMBER_BL_TEMP_OFFSET"
+        ),
+    )
+    parser.add_argument(
+        "--bl-wall-water-mode",
+        type=int,
+        choices=(0, 1, 2),
+        default=None,
+        help=(
+            "wall-vapour closure: 0=legacy saturation cap; "
+            "1=finite reservoir with fractional relaxation coupled to BL tau; "
+            "2=finite reservoir with physical vapour mass-transfer velocity "
+            "independent of BL tau"
+        ),
+    )
+    parser.add_argument(
+        "--wall-vapour-transfer-velocity-ms",
+        type=float,
+        default=None,
+        help=(
+            "physical chamber-wall vapour mass-transfer velocity km in m s-1, "
+            "used by --bl-wall-water-mode 2; if omitted use "
+            "iskylab_config.CHAMBER_WALL_VAPOUR_TRANSFER_VELOCITY"
+        ),
+    )
+    parser.add_argument(
+        "--wall-liquid-water-init-kg",
+        type=float,
+        default=None,
+        help=(
+            "initial physical liquid-water mass stored on the chamber wall in kg; "
+            "default is 0 (dry wall)"
+        ),
+    )
+    parser.add_argument(
+        "--wall-ice-water-init-kg",
+        type=float,
+        default=None,
+        help=(
+            "initial physical ice/frost mass stored on the chamber wall in kg; "
+            "default is 0 (no initial frost)"
+        ),
+    )
+    parser.add_argument(
+        "--wall-water-efficiency",
+        type=float,
+        default=None,
+        help=(
+            "fractional equilibration of a BL wall encounter with wall equilibrium, "
+            "0=no vapour exchange and 1=full equilibration; evaporation/sublimation "
+            "is always capped by the prognostic stored wall-water mass"
         ),
     )
     parser.add_argument(
@@ -2632,6 +3012,15 @@ if __name__ == "__main__":
             "set n_binsc in a temporary copy of BMM_MODEL_FOLDER/sce/namelist.in "
             "and point the generated BMM namelist scefile at that copy; "
             "the repository SCE namelist is never modified"
+        ),
+    )
+    parser.add_argument(
+        "--plt-ion",
+        action="store_true",
+        help=(
+            "enable matplotlib interactive mode with plt.ion(); default is off. "
+            "With the default non-interactive mode, displayed figures are closed "
+            "after plt.show() so batch scripts can continue to the next run."
         ),
     )
     parser.add_argument("--no-run", action="store_true", help="analyse existing output without running BMM")
@@ -2648,7 +3037,14 @@ if __name__ == "__main__":
         shift_cloud_measurements=args.shift_cloud_measurements,
         bl_tau_s=args.bl_tau_s,
         bl_temp_offset_k=args.bl_temp_offset_k,
+        bl_evap_size_exp=args.bl_evap_size_exp,
+        bl_wall_water_mode=args.bl_wall_water_mode,
+        wall_liquid_water_init_kg=args.wall_liquid_water_init_kg,
+        wall_ice_water_init_kg=args.wall_ice_water_init_kg,
+        wall_water_efficiency=args.wall_water_efficiency,
+        wall_vapour_transfer_velocity_ms=args.wall_vapour_transfer_velocity_ms,
         run_model=not args.no_run,
         do_analysis=not args.no_analysis,
         do_plot=not args.no_plot,
+        interactive_plots=args.plt_ion,
     )
